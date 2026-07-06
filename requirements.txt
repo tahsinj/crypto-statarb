@@ -1,0 +1,16 @@
+# Python 3.12. Create the environment with uv (recommended):
+#   uv venv --python 3.12 .venv
+#   uv pip install --python .venv -r requirements.txt
+# or with stock pip:  python -m venv .venv && .venv/bin/pip install -r requirements.txt
+pandas==3.0.4
+numpy==2.5.0
+scipy==1.18.0
+matplotlib==3.11.0
+statsmodels==0.14.6
+pyarrow==24.0.0
+jupyter==1.1.1
+nbconvert==7.17.1
+jupytext==1.19.4
+ipykernel==7.3.0
+fpdf2==2.8.7
+yfinance==1.5.1   # fallback data source; primary fetch (Binance) is stdlib-only
