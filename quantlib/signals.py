@@ -80,6 +80,52 @@ def seasonal_scale(returns: pd.Series, weekend: float = 1.0, weekday: float = 1.
     return (returns * mult).rename(returns.name)
 
 
+def calendar_mask(index: pd.DatetimeIndex, bucket: str) -> pd.Series:
+    """Boolean mask over ``index`` for a named calendar bucket.
+
+    Calendar buckets are known in advance, so masking exposure by them is a
+    look-ahead-free timing overlay (same argument as seasonal_scale).
+    us_hours approximates the US cash session (14:00-21:00 UTC, weekdays).
+    turn_of_month spans the last day of a month through the 3rd of the next.
+    """
+    if bucket == "weekday":
+        vals = index.dayofweek < 5
+    elif bucket == "weekend":
+        vals = index.dayofweek >= 5
+    elif bucket == "us_hours":
+        vals = (index.hour >= 14) & (index.hour < 21) & (index.dayofweek < 5)
+    elif bucket == "off_hours":
+        vals = ~((index.hour >= 14) & (index.hour < 21) & (index.dayofweek < 5))
+    elif bucket == "turn_of_month":
+        vals = (index.day >= index.days_in_month) | (index.day <= 3)
+    else:
+        raise ValueError(
+            f"unknown bucket {bucket!r}; valid: weekday, weekend, us_hours, "
+            "off_hours, turn_of_month"
+        )
+    return pd.Series(vals, index=index)
+
+
+def rolling_zscore(
+    panel: pd.DataFrame,
+    window: int = 60,
+    min_periods: int | None = None,
+    shift: bool = True,
+) -> pd.DataFrame:
+    """Per-column time-series z-score against a trailing window.
+
+    With shift=True (default) the rolling mean and std are lagged one period,
+    so date t is scored against data through t-1 only. Signals should use this
+    form; shift=False is for descriptive work.
+    """
+    mp = min_periods if min_periods is not None else max(10, window // 2)
+    mean = panel.rolling(window, min_periods=mp).mean()
+    std = panel.rolling(window, min_periods=mp).std()
+    if shift:
+        mean, std = mean.shift(1), std.shift(1)
+    return (panel - mean) / std.where(std > 0)
+
+
 def signal_to_weights(
     signal: pd.DataFrame,
     universe: pd.DataFrame,
