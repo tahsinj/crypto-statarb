@@ -243,7 +243,8 @@ def sleeve_corr_table(seas: pd.Series, of: pd.Series, carry: pd.Series) -> list:
 def windows_table(cp: pd.DataFrame) -> list:
     wf = cp["walk_forward"]
     ew = cp["equal_weight"]
-    rows = [["Window", "WF Sharpe", "WF Ann.Ret", "WF MaxDD", "EW Sharpe", "EW Ann.Ret", "EW MaxDD"]]
+    rows = [["Window", "WF Sharpe", "WF Ann.Ret", "WF Vol", "WF MaxDD",
+             "EW Sharpe", "EW Ann.Ret", "EW Vol", "EW MaxDD"]]
     for label, slc in [
         ("Development (2020-2024-07)", DEV),
         ("Gate (2024-08 to 2025-06)", GATE),
@@ -255,9 +256,11 @@ def windows_table(cp: pd.DataFrame) -> list:
             label,
             f"{metrics.sharpe(w):+.2f}",
             f"{metrics.ann_return(w):.1%}",
+            f"{metrics.ann_vol(w):.1%}",
             f"{metrics.max_drawdown(w):.1%}",
             f"{metrics.sharpe(e):+.2f}",
             f"{metrics.ann_return(e):.1%}",
+            f"{metrics.ann_vol(e):.1%}",
             f"{metrics.max_drawdown(e):.1%}",
         ])
     return rows

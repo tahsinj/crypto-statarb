@@ -106,7 +106,8 @@ is cached under `data/raw/` (gitignored). `quantlib.fetch.refresh` refetches
 when the cache is more than a day old.
 
 - Daily klines: top-150 USDT pairs, 2018 to present.
-- Hourly klines: top-60 pairs by trailing ADV, 2020 to present.
+- Hourly klines: top-60 pairs by trailing ADV, 2020-06 onward (the panel only
+  holds more than 20 names from mid-2020).
 - Perpetual funding rates from Binance fapi, 2019-09 onward.
 
 Validation windows:
