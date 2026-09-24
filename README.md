@@ -1,47 +1,80 @@
 # Statistical Arbitrage in Cryptocurrencies
 
-A research project: find profitable
-momentum and/or reversal strategies in crypto, backtest them unconstrained and
-net of realistic costs (20 bps market / 7 bps limit orders), combine them with
-proper weighting, and report returns, volatility, Sharpe, drawdown and
-alpha/beta.
+The goal: find momentum
+and/or reversal strategies in crypto, backtest them unconstrained with
+realistic costs (20 bps for market orders, 7 bps for limit orders), combine the
+ones that work with proper weighting, and report returns, volatility, Sharpe,
+drawdowns and alpha/beta.
 
-Every backtest is point-in-time, tuned only on a development window, checked
-out of sample and charged transaction costs. Ideas that failed are reported
-along with the ones that worked.
+The write-up is [`reports/REPORT.pdf`](reports/REPORT.pdf). The notebooks hold
+the full research trail, including the ideas that failed.
 
-## Headline result
+## How the research was run
 
-A low-beta book of three sleeves: calendar-scaled momentum (Seasonality),
-taker-imbalance following (Orderflow) and funding carry (Carry).
+- Data comes straight from Binance's public API: daily bars for the top 150
+  USDT pairs since 2018, hourly bars for the 60 most liquid, and perp funding
+  rates.
+- Each day's universe is the 100 most liquid coins as of the previous day, so
+  no backtest trades a coin it could not have known about.
+- Weights set at the close of day t earn day t+1's return, and every trade is
+  charged: 20 bps for the momentum sleeves (market orders), 7 bps for the
+  others (limit orders).
+- Parameters were chosen on a development window (2020-01 to 2024-07) and
+  checked on a gate window (2024-08 to 2025-06). The lockbox year (2025-07 to
+  2026-07) was run once, in notebook 06, after every choice had been made.
+- All 48 configurations tried are in a trial registry, and the deflated Sharpe
+  ratio accounts for that many tries.
 
-| Window | WF Sharpe | EW Sharpe | BTC Beta |
+## Results
+
+The book combines three sleeves: momentum with weekday exposure halved
+(Seasonality), a 10-day taker-imbalance follower (Orderflow) and a funding
+carry trade (Carry). The main version uses walk-forward mean-variance weights;
+an equal-weight version runs alongside.
+
+| | Dev | Gate | Lockbox |
 |---|---:|---:|---:|
-| Development (2020-01 to 2024-07) | +0.40* | +1.68 | - |
-| Gate (2024-08 to 2025-06) | +2.52 | +2.90 | - |
-| **Lockbox (2025-07 to 2026-07)** | **+1.458** | **+1.233** | **-0.020** |
+| Walk-forward Sharpe | +0.40* | +2.52 | +1.46 |
+| Equal-weight Sharpe | +1.68 | +2.90 | +1.23 |
+| Walk-forward return / vol | 2.9% / 8.1% | 21.6% / 7.9% | 11.4% / 7.6% |
+| Walk-forward max drawdown | -8.1% | -3.9% | -4.7% |
+| Walk-forward beta to BTC | +0.00 | -0.05 | -0.02 |
 
-*The walk-forward book needs 756 days of training, so its dev figure only
-starts in 2021-10.*
+\* The walk-forward book needs 756 days of history, so its dev figure only
+covers 2021-10 to 2024-07.
 
-Lockbox annualised alpha 9.48% (HAC t = 1.25). Deflated Sharpe is 0.490 on
-the full sample and 0.205 on the lockbox against 48 enumerated trials:
-positive, but not statistically decisive.
+On the lockbox the walk-forward book has an alpha of 9.5% a year (Newey-West
+t = 1.25) and a block-bootstrap 95% interval for its Sharpe of [-0.42, 3.44].
+The deflated Sharpe is 0.49 on the full sample and 0.20 on the lockbox, far
+below the usual 0.95. The book made money with almost no market exposure, but
+the evidence is not strong enough to call it proven.
 
-## What the research found
+**Correction found in an audit after the lockbox.** The Seasonality backtest
+scaled each day's return by 0.5 or 1.0 but never charged for the trades that
+resize the book twice a week. With those trades charged, the sleeve falls to
+dev +1.51 and gate +0.99, below the untilted momentum sleeve on dev, so it
+should not have been selected. Notebook 07 re-scores the same frozen book with
+the trades charged: lockbox Sharpe 1.49 (walk-forward) and 1.16 (equal
+weight), deflated Sharpe 0.21. The conclusion stays the same.
 
-- Baseline momentum decayed: dev Sharpe +1.65, gate +0.43.
-- Three new sleeves passed the dev and gate screens: Seasonality
-  (weekday/weekend scaling of momentum), Orderflow (10-day taker imbalance,
-  cross-sectional) and Carry (short high-funding perps). All three have gate
-  Sharpes above 0.8.
-- Hourly cross-sectional reversal fails on costs. The 4-hour lookback has a
-  gross Sharpe of +4.83, but hourly rebalancing costs 461% a year against a
-  272% gross return. That ratio (0.59) is far below the 3x threshold set in
-  advance.
-- Equal weight beats mean-variance on most windows. With three nearly
-  uncorrelated sleeves there is little for mean-variance to add, and it only
-  comes out ahead on the lockbox.
+## What worked and what didn't
+
+- Baseline time-series momentum decayed: Sharpe +1.65 on dev, +0.43 on the
+  gate. Pairs trading lost money on dev (-0.40).
+- Halving momentum's weekday exposure looked better on both windows (dev
+  +1.79, gate +1.24) but lost money on the lockbox (-0.56), and with correct
+  costs it would not have passed selection (above).
+- Following the 10-day taker-buy imbalance held up best: dev +0.89, gate
+  +2.12, lockbox +1.95. Every reversal variant built on order flow lost on dev.
+- Shorting high-funding perps against low-funding ones: dev +1.01, gate
+  +2.19, lockbox +0.88. On dev, 63% of its P&L is funding income.
+- Hourly cross-sectional reversal has a real gross edge (gross Sharpe +4.83 at
+  a 4-hour lookback), but hourly trading costs 461% a year against a 272%
+  gross return. No hourly config passed.
+- Equal weight beat walk-forward weights on every window except the lockbox.
+- Run in twsq on a fixed list of 20 large coins, the three sleeves are close
+  to flat (Sharpe +0.07, -0.15 and +0.22 over 2024-08 to 2026-07). The
+  order-flow edge seems to live in the smaller names of the top 100.
 
 ## Repository layout
 
@@ -49,85 +82,71 @@ positive, but not statistically decisive.
 quantlib/                 shared library used by every notebook
   fetch.py                Binance fetchers and the local cache
   data.py                 panels and the point-in-time universe
-  signals.py              ranks, z-scores, calendar masks, weights
-  backtest.py             vectorised backtest with a one-day weight lag and costs
+  signals.py              z-scores, calendar masks, weights
+  backtest.py             vectorised backtest: one-day weight lag, turnover costs
   pairs.py                pairs selection and trading (reversal baseline)
   strategies.py           sleeve definitions, costs as parameters
   metrics.py              performance stats, significance tests, alpha/beta
-  trials.py               trial registry used for the deflated Sharpe
-  robustness.py           walk-forward weights, capacity and regime tables
-  plotting.py             chart helpers and plot style
+  trials.py               trial registry behind the deflated Sharpe
+  robustness.py           walk-forward weights and other portfolio helpers
+  plotting.py             chart helpers and the plot style
 notebooks/
-  00_data                 fetch and cache Binance data; build daily/hourly/funding panels
+  00_data                 fetch and cache Binance data; build the panels
   01_baselines            baseline momentum and pairs
-  02_seasonality          calendar tilts on momentum; survivor: weekday/weekend scaling
-  03_orderflow            taker-imbalance signals; survivor: 10-day follow
-  04_carry                funding carry; survivor: 7-day smoothed, short high funding
-  05_fastrev              hourly cross-sectional reversal; no survivor (costs)
-  06_portfolio            walk-forward combination and the one-time lockbox evaluation
-alphas/                   twsq versions (SeasonalMomentum, OrderflowFollow, FundingCarry)
-tests/                    tests for look-ahead, neutrality, costs and the fetch layer
+  02_seasonality          calendar tilts on momentum
+  03_orderflow            taker-imbalance signals
+  04_carry                funding carry and crowding
+  05_fastrev              hourly cross-sectional reversal
+  06_portfolio            the combined book and the one lockbox run
+  07_posthoc              checks added after the lockbox (costs, carry P&L split)
+alphas/                   the three sleeves as twsq alphas, with backtest CSVs
+tests/                    look-ahead, neutrality, cost and fetch tests
 reports/
-  build_report.py         rebuilds REPORT.pdf and checks its key numbers
+  build_report.py         builds REPORT.pdf and checks its numbers
   REPORT.pdf              the written report
-data/raw/                 Binance cache (gitignored, rebuilt on demand)
-data/processed/           panels written by notebooks 00-06
 ```
+
+`data/` is not in the repository; notebook 00 rebuilds it.
 
 ## Reproducing
 
 ```bash
-# 1. environment (Python 3.12)
+# environment (Python 3.12)
 uv venv --python 3.12 .venv
 uv pip install --python .venv -r requirements.txt
 
-# 2. tests (look-ahead, dollar neutrality, costs)
+# tests
 for f in tests/test_*.py; do .venv/bin/python "$f"; done
 
-# 3. notebooks in order (00 fetches the data and writes data/processed/;
-#    01-06 read those panels)
-for nb in 00_data 01_baselines 02_seasonality 03_orderflow 04_carry 05_fastrev 06_portfolio; do
+# notebooks, in order
+for nb in 00_data 01_baselines 02_seasonality 03_orderflow 04_carry 05_fastrev 06_portfolio 07_posthoc; do
   .venv/bin/jupytext --to notebook notebooks/$nb.py
   .venv/bin/jupyter nbconvert --to notebook --execute --inplace notebooks/$nb.ipynb
 done
 
-# 4. rebuild the PDF (reads data/processed/ and checks the key numbers
-#    before writing)
+# report (stops without writing the PDF if a number disagrees with the notebooks)
 .venv/bin/python reports/build_report.py
 ```
 
-The notebooks are stored as paired `.py` files (jupytext, light format) for
-readable diffs; the `.ipynb` files keep the executed outputs.
+Things to know before rerunning:
 
-## Data
+- Notebook 00 downloads from Binance's global API, which refuses connections
+  from US IP addresses. The data in this project was fetched on 2026-07-06.
+  `END` in notebook 00 pins the sample to that date, but a new fetch picks the
+  top 150 pairs by volume on the day it runs, so the universe, and the
+  numbers, can differ a little.
+- Notebooks 01 to 05 append to `data/processed/trial_registry.csv`. Delete it
+  before a full rerun; notebook 06 expects exactly 48 research rows.
+- The twsq alphas run in a separate environment; see `alphas/README.md`.
 
-Raw data comes from Binance's public APIs (no API key) through notebook 00 and
-is cached under `data/raw/` (gitignored). `quantlib.fetch.refresh` refetches
-when the cache is more than a day old.
+The notebooks are stored as paired `.py` files (jupytext) for readable diffs;
+the `.ipynb` files keep the executed outputs.
 
-- Daily klines: top-150 USDT pairs, 2018 to present.
-- Hourly klines: top-60 pairs by trailing ADV, 2020-06 onward (the panel only
-  holds more than 20 names from mid-2020).
-- Perpetual funding rates from Binance fapi, 2019-09 onward.
+## Limitations
 
-Validation windows:
-
-| Window | Dates | Purpose |
-|---|---|---|
-| Development | 2020-01-01 to 2024-07-31 | parameter search, model selection |
-| Gate | 2024-08-01 to 2025-06-30 | held out during development |
-| Lockbox | 2025-07-01 to end | evaluated once, in notebook 06 |
-
-Survivorship bias is a known limitation. The universe is rebuilt from the
-pairs Binance lists today, so coins delisted before the fetch date are
-missing. The point-in-time liquidity screen and the gate split reduce the
-effect but cannot remove it.
-
-## Execution costs
-
-These costs map directly onto the engine: turnover times bps, with
-20 bps for market orders (7 bps commission plus 13 bps slippage) and 7 bps for
-limit orders (commission only). The seasonality sleeve takes liquidity on
-trend entries, so it pays the market-order rate; orderflow and carry
-rebalance passively and pay the limit rate. The three-sleeve book has not been
-stress-tested at higher costs yet (see the report's limitations).
+The report lists them in full. The main ones: the universe comes from coins
+Binance still listed in 2026, so earlier delistings are missing (the hourly
+and funding panels, picked by volume at fetch time, lean further toward
+survivors); everything is Binance-only; the carry backtest adds funding to
+spot returns and ignores the perp basis; Orderflow and Carry assume their
+limit orders always fill; and a one-year lockbox is short.

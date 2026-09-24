@@ -1,10 +1,11 @@
 """Build the PDF research report, ``reports/REPORT.pdf``.
 
-Tables and most numbers are computed from the cached panels in
-data/processed/ with quantlib.metrics. The fast-reversal table and a few
-sentences quote notebook outputs directly. The Section 4 headline numbers are
-checked against a recomputation and the script stops if they disagree. Run
-it after the notebooks:
+Every number in the report is computed here from the artifacts in
+data/processed/ (written by notebooks 00-07), from the twsq CSVs in alphas/,
+or, for the fast-reversal grid, read from notebook 05's executed output. The
+script checks the headline numbers against the values the notebooks printed
+and stops without writing the PDF if anything disagrees. Run it after the
+notebooks:
 
     .venv/bin/python reports/build_report.py
 
@@ -26,370 +27,370 @@ from fpdf import FPDF
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from quantlib import metrics, plotting, robustness  # noqa: E402
+# importing plotting also sets the chart style
+from quantlib import backtest, metrics, plotting, robustness, signals, strategies  # noqa: E402,F401
 
 PROC = ROOT / "data" / "processed"
+ALPHAS = ROOT / "alphas"
 OUT = ROOT / "reports" / "REPORT.pdf"
 
-# Validation windows
-DEV_START = "2020-01-01"
-DEV_END = "2024-07-31"
-GATE_START = "2024-08-01"
-GATE_END = "2025-06-30"
-LOCKBOX_START = "2025-07-01"
-LOCKBOX_END = "2026-07-06"
-
-DEV = slice(DEV_START, DEV_END)
-GATE = slice(GATE_START, GATE_END)
-LOCKBOX = slice(LOCKBOX_START, LOCKBOX_END)
-FULL = slice(DEV_START, None)
-
-# Trial count used for deflated Sharpe: all pre-portfolio trials enumerated in the registry.
-# Rows 0-47 are the 48 alpha trials; rows 48-49 are portfolio combination entries.
-N_ALPHA_TRIALS = 48
-
-# Unicode substitutions so fpdf2 core Latin-1 font handles everything.
-_SUBS = {
-    "–": "-", "—": "-", "−": "-", "≈": "~", "×": "x",
-    "²": "^2", "·": ".", "→": "->", "‘": "'", "’": "'",
-    "“": '"', "”": '"', "•": "-", "σ": "sigma",
-    "Σ": "Sum", "α": "alpha", "β": "beta",
-    "≥": ">=", "≤": "<=", "Δ": "d",
+DEV_START, DEV_END = "2020-01-01", "2024-07-31"
+GATE_START, GATE_END = "2024-08-01", "2025-06-30"
+LOCKBOX_START, LOCKBOX_END = "2025-07-01", "2026-07-06"
+WINDOWS = {
+    "Dev": slice(DEV_START, DEV_END),
+    "Gate": slice(GATE_START, GATE_END),
+    "Lockbox": slice(LOCKBOX_START, LOCKBOX_END),
+    "Full": slice(DEV_START, LOCKBOX_END),
 }
+N_TRIALS = 48          # research trials in the registry (rows 1-48); rows 49-50 are the two books
+BOOT = dict(n_boot=2000, method="block", seed=42)   # same settings as notebooks 06 and 07
+
+# fpdf2's core fonts are Latin-1 only.
+_SUBS = {"−": "-", "≈": "~", "×": "x", "·": ".", "‘": "'", "’": "'", "“": '"', "”": '"',
+         "σ": "sigma", "≥": ">=", "≤": "<="}
 
 
-def _ascii(text: str) -> str:
+def _latin1(text: str) -> str:
     for k, v in _SUBS.items():
         text = text.replace(k, v)
     return text.encode("latin-1", "replace").decode("latin-1")
 
 
-def _twsq_sharpe(alpha_name: str) -> float:
-    """Compute daily Sharpe from a committed twsq pos_pnl.csv (same formula as run_twsq._stats)."""
-    path = ROOT / "alphas" / alpha_name / "backtest" / "pos_pnl.csv"
-    pnl = pd.read_csv(path)["pnl"].dropna()
-    sd = pnl.std()
-    return float(pnl.mean() / sd * np.sqrt(365)) if sd else float("nan")
+def pct(x: float, nd: int = 1) -> str:
+    return f"{x * 100:.{nd}f}%"
 
 
-def _survivor_sharpes(reg: pd.DataFrame, family: str, match: dict) -> tuple[float, float]:
-    """Return (dev_sharpe, gate_sharpe) for the first row in reg where family matches
-    and config JSON contains all key-value pairs in match."""
-    for _, row in reg[reg["family"] == family].iterrows():
-        cfg = json.loads(row["config"])
-        if all(cfg.get(k) == v for k, v in match.items()):
-            return float(row["dev_sharpe"]), float(row["gate_sharpe"])
-    raise ValueError(f"Survivor not found: family={family!r}, match={match!r}")
+def sr(x: float) -> str:
+    return f"{x:+.2f}"
 
 
 # ---------------------------------------------------------------------------
-# Load artifacts
+# Inputs
 # ---------------------------------------------------------------------------
 
-def load_inputs():
-    need = ["combined_portfolio", "benchmarks", "sleeve_baseline_momentum",
-            "sleeve_baseline_reversal", "sleeve_seasonality", "sleeve_orderflow",
-            "sleeve_carry"]
+def load_inputs() -> dict:
+    need = ["combined_portfolio", "benchmarks", "sleeve_baseline_momentum", "sleeve_baseline_reversal",
+            "sleeve_seasonality", "sleeve_orderflow", "sleeve_carry", "sleeves_full",
+            "posthoc_book", "price", "returns", "universe", "taker_imbalance", "funding",
+            "price_1h"]
     missing = [n for n in need if not (PROC / f"{n}.parquet").exists()]
     if missing:
-        raise FileNotFoundError(
-            f"Missing panels {missing} in {PROC}. Run notebooks 00-06 first."
-        )
-    cp = pd.read_parquet(PROC / "combined_portfolio.parquet")
-    bm = pd.read_parquet(PROC / "benchmarks.parquet")
-    mom_base = pd.read_parquet(PROC / "sleeve_baseline_momentum.parquet")["momentum"]
-    rev_base = pd.read_parquet(PROC / "sleeve_baseline_reversal.parquet")["reversal"]
-    seas = pd.read_parquet(PROC / "sleeve_seasonality.parquet")["seasonality"]
-    of = pd.read_parquet(PROC / "sleeve_orderflow.parquet")["orderflow"]
-    carry = pd.read_parquet(PROC / "sleeve_carry.parquet")["carry"]
-    reg = pd.read_csv(PROC / "trial_registry.csv")
-    return cp, bm, mom_base, rev_base, seas, of, carry, reg
+        raise FileNotFoundError(f"Missing {missing} in {PROC}. Run notebooks 00-07 first.")
+    d = {n: pd.read_parquet(PROC / f"{n}.parquet") for n in need}
+    d["registry"] = pd.read_csv(PROC / "trial_registry.csv")
+    d["cost_stress"] = pd.read_csv(PROC / "posthoc_cost_stress.csv")
+    d["carry_split"] = pd.read_csv(PROC / "posthoc_carry_split.csv").set_index("window")
+    return d
+
+
+def fastrev_grid() -> pd.DataFrame:
+    """The gross-vs-cost grid as printed by notebook 05 (its gross returns are not saved)."""
+    nb = json.loads((ROOT / "notebooks" / "05_fastrev.ipynb").read_text())
+    for cell in nb["cells"]:
+        for out in cell.get("outputs", []):
+            text = "".join(out.get("text", ""))
+            if "gross_over_drag" not in text:
+                continue
+            lines = text.strip().splitlines()
+            cols = lines[0].split()
+            rows, lb = [], None
+            for line in lines[1:]:
+                tok = line.split()
+                if len(tok) == len(cols) + 2:
+                    lb, tok = int(tok[0]), tok[1:]
+                rows.append([lb, int(tok[0])] + [float(t) for t in tok[1:-1]] + [tok[-1] == "True"])
+            return pd.DataFrame(rows, columns=["lookback_h", "rebal_h"] + cols)
+    raise ValueError("fast-reversal grid not found in notebook 05 output")
+
+
+def twsq_results() -> pd.DataFrame:
+    rows = {}
+    for name in ["SeasonalMomentum", "OrderflowFollow", "FundingCarry"]:
+        stats = pd.read_csv(ALPHAS / name / "stats.csv").iloc[0]
+        pnl = pd.read_csv(ALPHAS / name / "backtest" / "pos_pnl.csv")["pnl"]
+        check = pnl.mean() / pnl.std() * np.sqrt(365)
+        assert abs(check - stats["sharpe"]) < 1e-9, f"{name}: stats.csv out of date"
+        rows[name] = stats
+    return pd.DataFrame(rows).T
 
 
 # ---------------------------------------------------------------------------
-# Assert Section 4 numbers against combined_portfolio.parquet
+# Statistics
 # ---------------------------------------------------------------------------
 
-def assert_section4(cp: pd.DataFrame, btc: pd.Series, mkt: pd.Series) -> dict:
-    """Recompute the Section 4 headline numbers and stop if they disagree with
-    the values quoted in the text.
+def perf(r: pd.Series, bench: pd.DataFrame) -> dict:
+    r = r.dropna()
+    ab = metrics.alpha_beta(r, bench["BTC"], bench["MKT"], names=["BTC", "MKT"])
+    return {"ret": metrics.ann_return(r), "vol": metrics.ann_vol(r), "sharpe": metrics.sharpe(r),
+            "mdd": metrics.max_drawdown(r), "beta": ab["beta_BTC"], "alpha": ab["alpha_ann"],
+            "alpha_t": ab["alpha_tstat"], "n": len(r)}
 
-    Returns the computed values so the report body can use them directly.
-    """
-    wf = cp["walk_forward"]
-    ew = cp["equal_weight"]
 
-    lk_wf = wf.loc[LOCKBOX].dropna()
-    lk_ew = ew.loc[LOCKBOX].dropna()
-    full_wf = wf.loc[FULL].dropna()
+def check(label: str, got: float, expected: float, tol: float, failures: list) -> None:
+    if not abs(got - expected) <= tol:
+        failures.append(f"  {label}: got {got:.4f}, expected {expected:.4f} (tol {tol})")
 
-    lk_wf_sr = metrics.sharpe(lk_wf)
-    lk_ew_sr = metrics.sharpe(lk_ew)
-    dsr_full = metrics.deflated_sharpe(full_wf, n_trials=N_ALPHA_TRIALS)
-    dsr_lk = metrics.deflated_sharpe(lk_wf, n_trials=N_ALPHA_TRIALS)
 
-    # Alpha / beta uses both BTC and equal-weight market as regressors.
-    ab = metrics.alpha_beta(
-        lk_wf,
-        btc.reindex(lk_wf.index),
-        mkt.reindex(lk_wf.index),
-        names=["BTC", "MKT"],
-    )
+def compute(d: dict) -> dict:
+    bench = d["benchmarks"]
+    cp = d["combined_portfolio"]
+    wf, ew = cp["walk_forward"], cp["equal_weight"]
+    sleeves = d["sleeves_full"]
+    ph = d["posthoc_book"]
+    failures: list[str] = []
 
-    TOL_SR = 0.005   # Sharpe tolerance (rounding)
-    TOL_BETA = 0.002
-    TOL_ALPHA = 0.002
-    TOL_T = 0.02
-    TOL_DSR = 0.005
+    # sleeves_full (notebook 07) must be the book notebook 06 built: the same
+    # research parquets up to the gate, and the same equal-weight average.
+    for name in ["seasonality", "orderflow", "carry"]:
+        sealed = d[f"sleeve_{name}"][name].loc[DEV_START:GATE_END]
+        both = pd.concat([sleeves[name].loc[DEV_START:GATE_END], sealed], axis=1).dropna()
+        if not np.array_equal(both.iloc[:, 0].to_numpy(), both.iloc[:, 1].to_numpy()):
+            failures.append(f"  sleeves_full[{name}] differs from sleeve_{name}.parquet")
+    ew_check = pd.concat([sleeves.dropna().mean(axis=1), ew], axis=1, sort=True).dropna()
+    if not np.array_equal(ew_check.iloc[:, 0].to_numpy(), ew_check.iloc[:, 1].to_numpy()):
+        failures.append("  sleeves_full does not reproduce the equal-weight book")
 
-    checks = [
-        ("lockbox WF Sharpe", lk_wf_sr, 1.458, TOL_SR),
-        ("lockbox EW Sharpe", lk_ew_sr, 1.233, TOL_SR),
-        ("lockbox beta_BTC", ab["beta_BTC"], -0.020, TOL_BETA),
-        ("lockbox alpha_ann", ab["alpha_ann"], 0.0948, TOL_ALPHA),
-        ("lockbox alpha_tstat", ab["alpha_tstat"], 1.25, TOL_T),
-        ("deflated_sharpe_full", dsr_full, 0.490, TOL_DSR),
-        ("deflated_sharpe_lockbox", dsr_lk, 0.205, TOL_DSR),
-    ]
-    failures = []
-    for name, got, expected, tol in checks:
-        if abs(got - expected) > tol:
-            failures.append(f"  {name}: got {got:.4f}, expected {expected:.4f} (tol {tol})")
+    reg = d["registry"]
+    if len(reg) != N_TRIALS + 2 or (reg["family"] != "portfolio").sum() != N_TRIALS:
+        failures.append(f"  registry has {len(reg)} rows; expected {N_TRIALS} trials + 2 books")
+
+    v: dict = {}
+    v["book"] = {(b, w): perf(s.loc[sl], bench) for b, s in [("WF", wf), ("EW", ew)]
+                 for w, sl in WINDOWS.items()}
+    v["sleeve"] = {(n, w): perf(sleeves[n].loc[sl], bench) for n in sleeves.columns
+                   for w, sl in WINDOWS.items() if w != "Full"}
+    lk, full = wf.loc[WINDOWS["Lockbox"]].dropna(), wf.loc[WINDOWS["Full"]].dropna()
+    v["lk_n"] = len(lk)
+    v["dsr_full"] = metrics.deflated_sharpe(full, n_trials=N_TRIALS)
+    v["dsr_lk"] = metrics.deflated_sharpe(lk, n_trials=N_TRIALS)
+    v["ci"] = metrics.bootstrap_sharpe_ci(lk, **BOOT)
+    v["corr"] = sleeves.loc[WINDOWS["Dev"]].corr()
+
+    # Post-hoc re-score (notebook 07).
+    wf_c, ew_c = ph["walk_forward_charged"], ph["equal_weight_charged"]
+    v["seas_c"] = {w: metrics.sharpe(ph["seasonality_charged"].loc[sl].dropna())
+                   for w, sl in WINDOWS.items() if w != "Full"}
+    v["resize_cost"] = (sleeves["seasonality"] - ph["seasonality_charged"]).loc[WINDOWS["Dev"]].mean() * 365
+    v["book_c"] = {(b, w): perf(s.loc[sl], bench) for b, s in [("WF", wf_c), ("EW", ew_c)]
+                   for w, sl in WINDOWS.items()}
+    lk_c, full_c = wf_c.loc[WINDOWS["Lockbox"]].dropna(), wf_c.loc[WINDOWS["Full"]].dropna()
+    v["dsr_full_c"] = metrics.deflated_sharpe(full_c, n_trials=N_TRIALS)
+    v["dsr_lk_c"] = metrics.deflated_sharpe(lk_c, n_trials=N_TRIALS)
+    v["ci_c"] = metrics.bootstrap_sharpe_ci(lk_c, **BOOT)
+    charged = sleeves.assign(seasonality=ph["seasonality_charged"])
+    v["lk_weight"] = {}
+    for label, X in [("as run", sleeves), ("charged", charged)]:
+        _, wp = robustness.walk_forward_weights(X.dropna(), train_days=756, step_days=63, min_train=252)
+        v["lk_weight"][label] = wp.loc[WINDOWS["Lockbox"]].mean()
+
+    # The untilted momentum sleeve with and without resizing costs, and the
+    # turnover of the two limit-order sleeves (dev and gate data only).
+    upto = slice(None, GATE_END)
+    price, rets, uni = d["price"].loc[upto], d["returns"].loc[upto], d["universe"].loc[upto]
+    for key, charge in [("untilted", False), ("untilted_c", True)]:
+        s = strategies.seasonal_momentum_sleeve(price, rets, uni, weekend=1.0, weekday=1.0,
+                                                charge_resizing=charge)
+        v[key] = {w: metrics.sharpe(s.loc[WINDOWS[w]].dropna()) for w in ["Dev", "Gate"]}
+    imb = d["taker_imbalance"].loc[upto]
+    w_of = signals.signal_to_weights(
+        signals.cross_sectional_zscore((imb - 0.5).rolling(10).mean(), uni), uni, long_short=True)
+    fund = d["funding"].loc[upto].reindex(columns=uni.columns)
+    fuv = uni & fund.notna()
+    w_ca = signals.signal_to_weights(
+        -signals.cross_sectional_zscore(fund.rolling(7).mean(), fuv), fuv, long_short=True)
+    v["turnover"] = {name: backtest.run(w, rets, cost_bps=7).turnover.loc[WINDOWS["Dev"]].mean()
+                     for name, w in [("orderflow", w_of), ("carry", w_ca)]}
+
+    # Baselines (notebook 01) and the selected configs (registry).
+    v["base"] = {(n, w): perf(d[f"sleeve_baseline_{n}"][n].loc[WINDOWS[w]], bench)
+                 for n in ["momentum", "reversal"] for w in ["Dev", "Gate"]}
+
+    def reg_sharpes(family: str, match: dict) -> tuple[float, float]:
+        for _, row in reg[reg["family"] == family].iterrows():
+            cfg = json.loads(row["config"])
+            if all(cfg.get(k) == val for k, val in match.items()):
+                return float(row["dev_sharpe"]), float(row["gate_sharpe"])
+        raise ValueError(f"no registry row for {family} {match}")
+
+    v["sel_seas"] = reg_sharpes("seasonality", {"probe": "P1", "weekday": 0.5, "weekend": 1.0})
+    v["sel_untilted"] = reg_sharpes("seasonality", {"probe": "P1", "weekday": 1.0, "weekend": 1.0})
+    v["sel_of"] = reg_sharpes("orderflow", {"probe": "P3", "dir": "follow", "smooth": 10})
+    v["sel_carry"] = reg_sharpes("carry", {"probe": "P1", "smooth": 7})
+
+    tw = twsq_results()
+    v["twsq"] = tw
+
+    # Numbers as printed by notebooks 06 and 07, and signs the text relies on.
+    lk_wf, lk_ew = v["book"][("WF", "Lockbox")], v["book"][("EW", "Lockbox")]
+    for label, got, exp, tol in [
+        ("lockbox WF Sharpe", lk_wf["sharpe"], 1.458, 0.0005),
+        ("lockbox EW Sharpe", lk_ew["sharpe"], 1.233, 0.0005),
+        ("lockbox WF beta to BTC", lk_wf["beta"], -0.020, 0.0005),
+        ("lockbox WF alpha", lk_wf["alpha"], 0.0948, 0.0001),
+        ("lockbox WF alpha t", lk_wf["alpha_t"], 1.253, 0.0005),
+        ("deflated Sharpe, full", v["dsr_full"], 0.4901, 0.00005),
+        ("deflated Sharpe, lockbox", v["dsr_lk"], 0.2049, 0.00005),
+        ("bootstrap CI low", v["ci"][0], -0.423, 0.0005),
+        ("bootstrap CI high", v["ci"][1], 3.444, 0.0005),
+        ("dev WF Sharpe", v["book"][("WF", "Dev")]["sharpe"], 0.397, 0.0005),
+        ("dev EW Sharpe", v["book"][("EW", "Dev")]["sharpe"], 1.681, 0.0005),
+        ("full WF Sharpe", v["book"][("WF", "Full")]["sharpe"], 1.020, 0.0005),
+        ("full EW Sharpe", v["book"][("EW", "Full")]["sharpe"], 1.763, 0.0005),
+        ("lockbox seasonality", v["sleeve"][("seasonality", "Lockbox")]["sharpe"], -0.565, 0.0005),
+        ("lockbox orderflow", v["sleeve"][("orderflow", "Lockbox")]["sharpe"], 1.949, 0.0005),
+        ("lockbox carry", v["sleeve"][("carry", "Lockbox")]["sharpe"], 0.881, 0.0005),
+        ("charged seasonality, dev", v["seas_c"]["Dev"], 1.515, 0.0005),
+        ("charged seasonality, gate", v["seas_c"]["Gate"], 0.993, 0.0005),
+        ("charged seasonality, lockbox", v["seas_c"]["Lockbox"], -0.892, 0.0005),
+        ("charged untilted, dev", v["untilted_c"]["Dev"], 1.636, 0.0005),
+        ("charged untilted, gate", v["untilted_c"]["Gate"], 0.421, 0.0005),
+        ("untilted as run vs registry, dev", v["untilted"]["Dev"], v["sel_untilted"][0], 1e-9),
+        ("resizing cost on dev", v["resize_cost"], 0.0269, 0.0005),
+        ("charged WF, lockbox", v["book_c"][("WF", "Lockbox")]["sharpe"], 1.490, 0.0005),
+        ("charged EW, lockbox", v["book_c"][("EW", "Lockbox")]["sharpe"], 1.158, 0.0005),
+        ("charged WF, full", v["book_c"][("WF", "Full")]["sharpe"], 0.703, 0.0005),
+        ("charged deflated Sharpe, full", v["dsr_full_c"], 0.234, 0.0005),
+        ("charged deflated Sharpe, lockbox", v["dsr_lk_c"], 0.214, 0.0005),
+    ]:
+        check(label, got, exp, tol, failures)
+    if not (v["untilted_c"]["Dev"] > v["seas_c"]["Dev"] and v["seas_c"]["Gate"] > v["untilted_c"]["Gate"]):
+        failures.append("  section 5.1 text assumes the charged overlay loses on dev and wins on the gate")
+    if not (abs(tw.loc["SeasonalMomentum", "sharpe"]) < 0.3 and tw.loc["OrderflowFollow", "sharpe"] < 0
+            and tw.loc["FundingCarry", "sharpe"] > 0):
+        failures.append("  section 6 text no longer matches the twsq results")
     if failures:
-        raise AssertionError(
-            "Section 4 number mismatch, PDF not written.\n" + "\n".join(failures)
-        )
-
-    return {
-        "lk_wf_sr": lk_wf_sr,
-        "lk_ew_sr": lk_ew_sr,
-        "beta_BTC": ab["beta_BTC"],
-        "beta_MKT": ab["beta_MKT"],
-        "alpha_ann": ab["alpha_ann"],
-        "alpha_tstat": ab["alpha_tstat"],
-        "r_squared": ab["r_squared"],
-        "dsr_full": dsr_full,
-        "dsr_lk": dsr_lk,
-        "full_wf_sr": metrics.sharpe(full_wf),
-    }
+        raise AssertionError("Report numbers disagree with the notebooks; PDF not written.\n"
+                             + "\n".join(failures))
+    return v
 
 
 # ---------------------------------------------------------------------------
 # Tables
 # ---------------------------------------------------------------------------
 
-def validation_protocol_table():
-    return [
-        ["Window", "Dates", "Purpose", "Opened"],
-        ["Development", f"{DEV_START} to {DEV_END}", "Parameter search, model selection", "Yes"],
-        ["Regime gate", f"{GATE_START} to {GATE_END}", "Hold-out during development", "Yes"],
-        ["Lockbox", f"{LOCKBOX_START} to {LOCKBOX_END}", "Final evaluation", "Once"],
-    ]
+FAMILY_LABEL = {"incumbent_momentum": "baseline", "incumbent_pairs": "baseline",
+                "seasonality": "seasonality", "orderflow": "orderflow", "carry": "carry",
+                "fastrev": "fast reversal", "portfolio": "book"}
 
 
-def incumbent_decay_table(mom: pd.Series, rev: pd.Series) -> list:
-    rows = [["Sleeve", "Dev Sharpe", "Gate Sharpe", "Dev n", "Gate n"]]
-    for name, s in [("Momentum (baseline)", mom), ("Pairs (baseline)", rev)]:
-        d = s.loc[DEV].dropna()
-        g = s.loc[GATE].dropna()
-        rows.append([name,
-                     f"{metrics.sharpe(d):+.2f}", f"{metrics.sharpe(g):+.2f}",
-                     str(len(d)), str(len(g))])
+def describe(family: str, cfg: dict) -> str:
+    """Readable label for a registry config."""
+    p = cfg.get("probe")
+    if family == "incumbent_momentum":
+        return f"momentum, {cfg['lookback']}d lookback, {cfg['target_vol']:.0%} vol target"
+    if family == "incumbent_pairs":
+        return f"pairs, entry {cfg['entry']:g} sigma, {cfg['zwin']}d z-score, top {cfg['top_k']}"
+    if family == "seasonality":
+        if p == "P1":
+            return f"P1 momentum, weekend x{cfg['weekend']:g}, weekday x{cfg['weekday']:g}"
+        if p == "P2":
+            where = {"weekday": "on weekdays", "weekend": "at weekends",
+                     "turn_of_month": "around the turn of the month"}[cfg["bucket"]]
+            return f"P2 hold market {where} only"
+        if p == "P3":
+            return f"P3 hold market {cfg['bucket'].replace('_', ' ')} only, hourly"
+        return f"P4 momentum, turn of month x{cfg['tom_mult']:g}"
+    if family == "orderflow":
+        if p == "P1" and cfg["cond"] == "none":
+            return f"P1 reversal {cfg['lookback']}d, no filter"
+        if p == "P1":
+            return f"P1 reversal {cfg['lookback']}d, volume z < {cfg['thresh']:g}"
+        if p == "P2":
+            return f"P2 reversal {cfg['lookback']}d, flow-unconfirmed"
+        return f"P3 imbalance {cfg['smooth']}d, {cfg['dir']}"
+    if family == "carry":
+        if p == "P1":
+            return f"P1 carry, {cfg['smooth']}d funding"
+        if p == "P2":
+            return f"P2 reversal {cfg['lookback']}d, |funding z| > {cfg['fz_thresh']:g}"
+        return f"P3 funding change, {cfg['smooth']}d, {cfg['dir']}"
+    if family == "fastrev":
+        return f"{cfg['lookback_h']}h lookback, rebalance every {cfg['rebal_h']}h"
+    if cfg.get("rule") == "walk_forward_mv":
+        return "walk-forward mean-variance, 756d fit, 63d step"
+    return "equal weight"
+
+
+def family_rows(reg: pd.DataFrame, family: str) -> list:
+    rows = [["Config", "Dev Sharpe", "Gate Sharpe"]]
+    for _, r in reg[reg["family"] == family].iterrows():
+        dev, gate = float(r["dev_sharpe"]), float(r["gate_sharpe"])
+        rows.append([describe(family, json.loads(r["config"])),
+                     sr(dev) if np.isfinite(dev) else "n/a", sr(gate) if np.isfinite(gate) else "n/a"])
     return rows
 
 
-def family_table(reg: pd.DataFrame, family: str) -> list:
-    sub = reg[reg["family"] == family].copy()
-    sub["dev_sharpe"] = sub["dev_sharpe"].astype(float)
-    sub["gate_sharpe"] = sub["gate_sharpe"].astype(float)
-    if sub.empty:
-        return [["config", "dev", "gate"]]
-    rows = [["Config", "Dev Sharpe", "Gate Sharpe", "Note"]]
-    for _, r in sub.iterrows():
-        rows.append([
-            str(r["config"])[:60],
-            f"{r['dev_sharpe']:+.2f}",
-            f"{r['gate_sharpe']:+.2f}",
-            str(r.get("note", ""))[:40],
-        ])
+def perf_rows(stats: dict, keys: list, labels: list) -> list:
+    rows = [["", "Ann. return", "Ann. vol", "Sharpe", "Max DD", "Beta BTC", "Alpha"]]
+    for key, lab in zip(keys, labels):
+        s = stats[key]
+        rows.append([lab, pct(s["ret"]), pct(s["vol"]), sr(s["sharpe"]), pct(s["mdd"]),
+                     f"{s['beta']:+.2f}", pct(s["alpha"])])
     return rows
 
 
-def fastrev_highlight_table() -> list:
-    """Gross vs cost table for the 4-hour and 4-hour/6-rebal configs (from nb 05)."""
-    # Computed during notebook 05 execution; gross returns are not separately saved.
-    return [
-        ["Config (lookback, rebal)", "Gross SR (hrly)", "Gross Ann.", "Cost drag Ann.", "Ratio", "Pass 3x?"],
-        ["4h, 1h",  "+4.83", "+272%", "+461%", "0.59", "No"],
-        ["4h, 6h",  "+0.86",  "+44%", "+146%", "0.30", "No"],
-        ["12h, 1h", "+1.80", "+103%", "+267%", "0.39", "No"],
-        ["24h, 1h", "+0.63",  "+37%", "+187%", "0.20", "No"],
-        ["48h, 1h", "+0.01",   "+1%", "+130%", "0.01", "No"],
-    ]
-
-
-def sleeve_corr_table(seas: pd.Series, of: pd.Series, carry: pd.Series) -> list:
-    X = pd.concat(
-        [seas.rename("Seasonality"), of.rename("Orderflow"), carry.rename("Carry")],
-        axis=1,
-    ).loc[DEV_START:DEV_END].dropna()
-    c = X.corr().round(3)
-    rows = [[""] + list(c.columns)]
-    for idx in c.index:
-        rows.append([idx] + [f"{v:.3f}" for v in c.loc[idx]])
-    return rows
-
-
-def windows_table(cp: pd.DataFrame) -> list:
-    wf = cp["walk_forward"]
-    ew = cp["equal_weight"]
-    rows = [["Window", "WF Sharpe", "WF Ann.Ret", "WF Vol", "WF MaxDD",
-             "EW Sharpe", "EW Ann.Ret", "EW Vol", "EW MaxDD"]]
-    for label, slc in [
-        ("Development (2020-2024-07)", DEV),
-        ("Gate (2024-08 to 2025-06)", GATE),
-        ("Lockbox (2025-07 to 2026-07)", LOCKBOX),
-    ]:
-        w = wf.loc[slc].dropna()
-        e = ew.loc[slc].dropna()
-        rows.append([
-            label,
-            f"{metrics.sharpe(w):+.2f}",
-            f"{metrics.ann_return(w):.1%}",
-            f"{metrics.ann_vol(w):.1%}",
-            f"{metrics.max_drawdown(w):.1%}",
-            f"{metrics.sharpe(e):+.2f}",
-            f"{metrics.ann_return(e):.1%}",
-            f"{metrics.ann_vol(e):.1%}",
-            f"{metrics.max_drawdown(e):.1%}",
-        ])
-    return rows
-
-
-def lockbox_alpha_table(vals: dict) -> list:
-    return [
-        ["Quantity (HAC, BTC + market regressors)", "Lockbox only"],
-        ["Annualised alpha", f"{vals['alpha_ann']:.2%}"],
-        ["Alpha t-stat (Newey-West)", f"{vals['alpha_tstat']:.2f}"],
-        ["Beta to BTC", f"{vals['beta_BTC']:+.3f}"],
-        ["Beta to equal-weight market", f"{vals['beta_MKT']:+.3f}"],
-        ["R-squared", f"{vals['r_squared']:.3f}"],
-    ]
-
-
-def significance_table(cp: pd.DataFrame, vals: dict, boot_ci: tuple[float, float]) -> list:
-    lo, hi = boot_ci
-    return [
-        ["Quantity", "Full sample", "Lockbox only"],
-        ["Sharpe", f"{vals['full_wf_sr']:.2f}", f"{vals['lk_wf_sr']:.2f}"],
-        ["Block-bootstrap 95% CI (lockbox)", "n/a", f"[{lo:.2f}, {hi:.2f}]"],
-        [f"Deflated Sharpe ({N_ALPHA_TRIALS} trials)", f"{vals['dsr_full']:.3f}", f"{vals['dsr_lk']:.3f}"],
-    ]
-
-
-def registry_table(reg: pd.DataFrame) -> list:
-    reg2 = reg.copy()
-    reg2["dev_sharpe"] = reg2["dev_sharpe"].astype(float)
-    reg2["gate_sharpe"] = reg2["gate_sharpe"].astype(float)
-    rows = [["#", "Family", "Config (truncated)", "Dev SR", "Gate SR", "Note"]]
-    for i, r in reg2.iterrows():
-        rows.append([
-            str(i + 1),
-            str(r["family"]),
-            str(r["config"])[:45],
-            f"{r['dev_sharpe']:+.2f}",
-            f"{r['gate_sharpe']:+.2f}",
-            str(r.get("note", ""))[:30],
-        ])
-    return rows
+PERF_WIDTHS = (34, 16, 14, 13, 14, 14, 13)
 
 
 # ---------------------------------------------------------------------------
 # Figures
 # ---------------------------------------------------------------------------
 
-def make_figures(cp: pd.DataFrame, btc: pd.Series,
-                 seas: pd.Series, of: pd.Series, carry: pd.Series,
-                 tmp: Path) -> dict[str, Path]:
-    paths: dict[str, Path] = {}
+def make_figures(d: dict, tmp: Path) -> dict:
+    cp, bench, sleeves = d["combined_portfolio"], d["benchmarks"], d["sleeves_full"]
+    wf = cp["walk_forward"].loc[DEV_START:LOCKBOX_END].dropna()
+    ew = cp["equal_weight"].loc[DEV_START:LOCKBOX_END].dropna()
+    btc = bench["BTC"].loc[DEV_START:LOCKBOX_END].dropna()
+    paths = {}
 
-    # Figure 1: Equity curves (wf vs ew vs BTC, log scale)
-    wf = cp["walk_forward"].loc[DEV_START:].dropna()
-    ew = cp["equal_weight"].loc[DEV_START:].dropna()
-    btc_s = btc.loc[DEV_START:].dropna()
-
-    fig, axes = plt.subplots(3, 1, figsize=(10, 8),
-                             gridspec_kw={"height_ratios": [3, 1, 1]})
-
+    fig, axes = plt.subplots(3, 1, figsize=(10, 8), gridspec_kw={"height_ratios": [3, 1, 1]})
     ax = axes[0]
-    for ser, label, color in [
-        (wf, f"Walk-forward (SR={metrics.sharpe(wf):.2f})", "steelblue"),
-        (ew, f"Equal-weight (SR={metrics.sharpe(ew):.2f})", "darkorange"),
-        (btc_s, f"BTC (SR={metrics.sharpe(btc_s):.2f})", "gray"),
-    ]:
-        eq = (1.0 + ser.fillna(0.0)).cumprod()
-        ax.plot(eq.index, eq.values, label=label,
-                color=color, linewidth=1.2 if "BTC" not in label else 0.9,
-                linestyle="--" if "BTC" in label else "-")
-    ax.axvline(pd.Timestamp(GATE_START), color="navy", ls=":", lw=1.0, label="Gate start")
-    ax.axvline(pd.Timestamp(LOCKBOX_START), color="red", ls="--", lw=1.2, label="Lockbox open")
+    for ser, label, color, ls in [(wf, "Walk-forward", "steelblue", "-"),
+                                  (ew, "Equal weight", "darkorange", "-"),
+                                  (btc, "BTC", "gray", "--")]:
+        eq = (1.0 + ser).cumprod()
+        ax.plot(eq.index, eq.values, color=color, ls=ls, lw=0.9 if label == "BTC" else 1.2,
+                label=f"{label} (Sharpe {metrics.sharpe(ser):.2f})")
+    for a in axes:
+        a.axvline(pd.Timestamp(GATE_START), color="navy", ls=":", lw=1.0)
+        a.axvline(pd.Timestamp(LOCKBOX_START), color="red", ls="--", lw=1.2)
     ax.set_yscale("log")
-    ax.set_title("Equity curves (log scale), 2020 to 2026-07")
+    ax.set_title("Growth of $1, log scale (dotted line: gate starts; dashed line: lockbox opens)")
     ax.legend(loc="upper left", fontsize=8)
-    ax.set_ylabel("growth of $1")
-
-    ax2 = axes[1]
     dd = metrics.drawdown_curve(wf)
-    ax2.fill_between(dd.index, dd.values, 0, color="crimson", alpha=0.35)
-    ax2.axvline(pd.Timestamp(GATE_START), color="navy", ls=":", lw=1.0)
-    ax2.axvline(pd.Timestamp(LOCKBOX_START), color="red", ls="--", lw=1.2)
-    ax2.set_title("Walk-forward drawdown")
-    ax2.set_ylabel("drawdown")
-
-    ax3 = axes[2]
+    axes[1].fill_between(dd.index, dd.values, 0, color="crimson", alpha=0.35)
+    axes[1].set_title("Walk-forward drawdown")
     roll = wf.rolling(180).mean() / wf.rolling(180).std() * np.sqrt(metrics.TRADING_DAYS)
-    ax3.plot(roll.index, roll.values, color="steelblue", lw=0.9)
-    ax3.axhline(0, color="k", lw=0.8)
-    ax3.axvline(pd.Timestamp(GATE_START), color="navy", ls=":", lw=1.0)
-    ax3.axvline(pd.Timestamp(LOCKBOX_START), color="red", ls="--", lw=1.2)
-    ax3.set_title("Rolling 180d Sharpe (walk-forward)")
-
+    axes[2].plot(roll.index, roll.values, color="steelblue", lw=0.9)
+    axes[2].axhline(0, color="k", lw=0.8)
+    axes[2].set_title("Walk-forward rolling 180-day Sharpe")
     fig.tight_layout()
-    p = tmp / "equity.png"
-    fig.savefig(p, dpi=130)
+    paths["equity"] = tmp / "equity.png"
+    fig.savefig(paths["equity"], dpi=130)
     plt.close(fig)
-    paths["equity"] = p
 
-    # Figure 2: Walk-forward weight path (regenerated from the 3 sleeves)
-    X_book = pd.concat(
-        [seas.rename("Seasonality"), of.rename("Orderflow"), carry.rename("Carry")],
-        axis=1,
-    ).loc[DEV_START:GATE_END].dropna()
-    _, weight_path = robustness.walk_forward_weights(
-        X_book, train_days=756, step_days=63, min_train=252
-    )
-
-    fig2, ax4 = plt.subplots(figsize=(10, 3.5))
-    colors2 = {"Seasonality": "goldenrod", "Orderflow": "steelblue", "Carry": "forestgreen"}
+    # The weights the book actually used: same inputs and settings as notebook 06.
+    _, weight_path = robustness.walk_forward_weights(sleeves.dropna(), train_days=756,
+                                                     step_days=63, min_train=252)
+    fig, ax = plt.subplots(figsize=(10, 3.4))
+    colors = {"seasonality": "goldenrod", "orderflow": "steelblue", "carry": "forestgreen"}
     for col in weight_path.columns:
-        ax4.plot(weight_path.index, weight_path[col].values,
-                 label=col, color=colors2.get(col, None), linewidth=1.0)
-    ax4.axhline(0, color="k", lw=0.6)
-    ax4.axvline(pd.Timestamp(GATE_START), color="navy", ls=":", lw=1.0, label="Gate start")
-    ax4.set_title("Walk-forward sleeve weights (max-Sharpe, fit on trailing 756 days)")
-    ax4.set_ylabel("weight")
-    ax4.legend(fontsize=8)
-    fig2.tight_layout()
-    p2 = tmp / "weights.png"
-    fig2.savefig(p2, dpi=130)
-    plt.close(fig2)
-    paths["weights"] = p2
-
+        ax.plot(weight_path.index, weight_path[col], label=col, color=colors[col], lw=1.1)
+    ax.axhline(0, color="k", lw=0.6)
+    ax.axvline(pd.Timestamp(GATE_START), color="navy", ls=":", lw=1.0)
+    ax.axvline(pd.Timestamp(LOCKBOX_START), color="red", ls="--", lw=1.2)
+    ax.set_title("Walk-forward sleeve weights (fit on the previous 756 days, refit every 63 days)")
+    ax.legend(fontsize=8, loc="upper left")
+    fig.tight_layout()
+    paths["weights"] = tmp / "weights.png"
+    fig.savefig(paths["weights"], dpi=130)
+    plt.close(fig)
     return paths
 
 
 # ---------------------------------------------------------------------------
-# PDF assembly
+# PDF
 # ---------------------------------------------------------------------------
 
 class Report(FPDF):
@@ -398,8 +399,8 @@ class Report(FPDF):
             return
         self.set_font("Helvetica", "I", 8)
         self.set_text_color(120)
-        self.cell(0, 6, _ascii("Statistical Arbitrage in Cryptocurrencies: research report"),
-                  align="R", new_x="LMARGIN", new_y="NEXT")
+        self.cell(0, 6, "Statistical Arbitrage in Cryptocurrencies", align="R",
+                  new_x="LMARGIN", new_y="NEXT")
         self.set_text_color(0)
 
     def footer(self):
@@ -412,342 +413,448 @@ class Report(FPDF):
     def h1(self, text: str):
         self.ln(3)
         self.set_font("Helvetica", "B", 13)
-        self.multi_cell(0, 7, _ascii(text), new_x="LMARGIN", new_y="NEXT")
+        self.multi_cell(0, 7, _latin1(text), new_x="LMARGIN", new_y="NEXT")
         self.ln(1)
 
     def h2(self, text: str):
         self.ln(2)
         self.set_font("Helvetica", "B", 10)
-        self.multi_cell(0, 6, _ascii(text), new_x="LMARGIN", new_y="NEXT")
-        self.ln(0)
+        self.multi_cell(0, 6, _latin1(text), new_x="LMARGIN", new_y="NEXT")
 
     def body(self, text: str):
         self.set_font("Helvetica", "", 10)
-        self.multi_cell(0, 5, _ascii(text), new_x="LMARGIN", new_y="NEXT")
+        self.multi_cell(0, 5, _latin1(text), new_x="LMARGIN", new_y="NEXT")
+        self.ln(1)
+
+    def bullets(self, items: list):
+        self.set_font("Helvetica", "", 10)
+        for item in items:
+            self.multi_cell(0, 5, _latin1("- " + item), new_x="LMARGIN", new_y="NEXT")
         self.ln(1)
 
     def caption(self, text: str):
         self.set_font("Helvetica", "I", 8)
         self.set_text_color(90)
-        self.multi_cell(0, 4, _ascii(text), new_x="LMARGIN", new_y="NEXT")
+        self.multi_cell(0, 4, _latin1(text), new_x="LMARGIN", new_y="NEXT")
         self.set_text_color(0)
         self.ln(1)
 
-    def table_block(self, rows: list, title: str | None = None):
+    def table_block(self, rows: list, title: str | None = None, widths: tuple | None = None,
+                    align: tuple | None = None):
         if title:
-            self.set_font("Helvetica", "B", 10)
-            self.multi_cell(0, 5, _ascii(title), new_x="LMARGIN", new_y="NEXT")
+            self.set_font("Helvetica", "B", 9)
+            self.multi_cell(0, 5, _latin1(title), new_x="LMARGIN", new_y="NEXT")
         self.set_font("Helvetica", "", 8)
-        with self.table(first_row_as_headings=True, line_height=5.0,
-                        text_align="LEFT", padding=1) as table:
+        # text in the first column, numbers to the right, unless told otherwise
+        align = align or ("LEFT",) + ("RIGHT",) * (len(rows[0]) - 1)
+        with self.table(first_row_as_headings=True, line_height=4.6, padding=1,
+                        col_widths=widths, text_align=align) as table:
             for row in rows:
                 tr = table.row()
                 for cell in row:
-                    tr.cell(_ascii(str(cell)))
+                    tr.cell(_latin1(str(cell)))
         self.ln(2)
 
-    def figure(self, path: Path, w: int = 170):
+    def figure(self, path: Path, w: int = 172):
         self.image(str(path), w=w)
         self.ln(2)
 
 
-def build_pdf(cp, btc, mkt, mom_base, rev_base, seas, of, carry, reg, vals, figs):
-    # ---------------------------------------------------------------------------
-    # Derive all prose values from committed artifacts
-    # ---------------------------------------------------------------------------
-    # Finding 1: twsq Sharpes from committed pos_pnl.csv files
-    twsq_seas_sr = _twsq_sharpe("SeasonalMomentum")
-    twsq_of_sr = _twsq_sharpe("OrderflowFollow")
-    twsq_carry_sr = _twsq_sharpe("FundingCarry")
+def build_pdf(d: dict, v: dict, figs: dict) -> int:
+    reg = d["registry"]
+    book, bookc, sl, base = v["book"], v["book_c"], v["sleeve"], v["base"]
+    lk_wf, lk_ew = book[("WF", "Lockbox")], book[("EW", "Lockbox")]
+    grid = fastrev_grid()
+    tw = v["twsq"]
+    stress = d["cost_stress"].set_index(["sleeve", "cost_bps"])
+    split = d["carry_split"]
+    price, uni, funding, price_1h = d["price"], d["universe"], d["funding"], d["price_1h"]
+    seas_dev, seas_gate = v["sel_seas"]
+    unt_dev, unt_gate = v["sel_untilted"]
+    of_dev, of_gate = v["sel_of"]
+    ca_dev, ca_gate = v["sel_carry"]
+    fr4 = grid[(grid.lookback_h == 4) & (grid.rebal_h == 1)].iloc[0]
+    seas_c, unt_c = v["seas_c"], v["untilted_c"]
+    lo, hi = v["ci"]
+    lo_c, hi_c = v["ci_c"]
+    uni_size = int(uni.loc[DEV_START:].sum(axis=1).median())
+    n_hourly = price_1h.shape[1]
+    of_cut = 1 - stress.loc[("orderflow", 20), "dev"] / stress.loc[("orderflow", 7), "dev"]
 
-    # Finding 2: survivor config Sharpes from trial registry
-    seas_dev_sr, seas_gate_sr = _survivor_sharpes(
-        reg, "seasonality", {"weekday": 0.5, "weekend": 1.0}
-    )
-    of_dev_sr, of_gate_sr = _survivor_sharpes(
-        reg, "orderflow", {"dir": "follow", "probe": "P3", "smooth": 10}
-    )
-    carry_dev_sr, carry_gate_sr = _survivor_sharpes(
-        reg, "carry", {"probe": "P1", "smooth": 7}
-    )
-
-    # Finding 3: baseline Sharpes, same computation as incumbent_decay_table
-    mom_dev_sr = metrics.sharpe(mom_base.loc[DEV].dropna())
-    mom_gate_sr = metrics.sharpe(mom_base.loc[GATE].dropna())
-    rev_dev_sr = metrics.sharpe(rev_base.loc[DEV].dropna())
-    rev_gate_sr = metrics.sharpe(rev_base.loc[GATE].dropna())
-
-    # Finding 4: bootstrap CI, computed once and used in both table and text
-    lk_wf = cp["walk_forward"].loc[LOCKBOX].dropna()
-    boot_lo, boot_hi = metrics.bootstrap_sharpe_ci(lk_wf, n_boot=3000, method="block", seed=42)
-    _ci_txt = (
-        f"[{boot_lo:.2f}, {boot_hi:.2f}], which includes zero"
-        if boot_lo < 0 < boot_hi
-        else f"[{boot_lo:.2f}, {boot_hi:.2f}], which excludes zero"
-    )
-
-    # ---------------------------------------------------------------------------
     pdf = Report(format="A4")
     pdf.set_auto_page_break(True, margin=15)
     pdf.set_margins(18, 15, 18)
     pdf.add_page()
 
-    # Title block
     pdf.set_font("Helvetica", "B", 19)
-    pdf.multi_cell(0, 9, _ascii("Statistical Arbitrage in Cryptocurrencies"),
-                   new_x="LMARGIN", new_y="NEXT")
+    pdf.multi_cell(0, 9, "Statistical Arbitrage in Cryptocurrencies", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "", 11)
     pdf.set_text_color(90)
-    pdf.multi_cell(0, 6,
-                   _ascii("Momentum, reversal and funding carry "
-                           "in a low-beta book built on Binance data."),
-                   new_x="LMARGIN", new_y="NEXT")
+    pdf.multi_cell(0, 6, "Momentum, reversal and funding carry "
+                         "on Binance data, 2020 to mid-2026", new_x="LMARGIN", new_y="NEXT")
     pdf.set_text_color(0)
     pdf.ln(3)
 
-    # Abstract
-    pdf.h1("Abstract")
+    pdf.h1("Summary")
     pdf.body(
-        "We test momentum and reversal strategies on live Binance daily price-volume data, "
-        "backtest them unconstrained and net of realistic costs (20 bps market / 7 bps limit), "
-        "and combine the survivors into a low-beta book. "
-        "The baseline time-series momentum sleeve has a clear edge in the development window "
-        "that weakened after 2024-08. Three new sleeves make up the book: calendar-scaled "
-        "momentum (Seasonality), a taker-imbalance follower (Orderflow) and a funding-carry "
-        "short (Carry). Walk-forward weighting gives a lockbox Sharpe of +1.458 and equal "
-        "weighting +1.233. The book's beta to BTC is close to zero. "
-        "Annualised alpha is 9.48% (HAC t = 1.25). "
-        "The deflated Sharpe is 0.490 on the full sample and 0.205 on the lockbox against 48 "
-        "enumerated trials: positive, but not statistically decisive."
+        "I tested momentum and reversal ideas on daily and hourly Binance data, charged every "
+        "backtest realistic costs (20 bps for market orders, 7 bps for limit orders) and "
+        "combined the strategies that passed into one book. Parameters were chosen on a "
+        "development window (2020 to mid-2024), checked on a separate gate window (August 2024 "
+        "to June 2025) and then run once on a lockbox year (July 2025 to July 2026) that no "
+        f"decision had looked at. Every configuration tried is logged, {N_TRIALS} in all, and "
+        "the deflated Sharpe ratio charges the book for that search.\n\n"
+        "The baseline time-series momentum sleeve worked well on the development window "
+        f"(Sharpe {sr(base[('momentum', 'Dev')]['sharpe'])}) and much less well afterwards "
+        f"({sr(base[('momentum', 'Gate')]['sharpe'])}). Pairs trading and plain short-horizon "
+        "reversal lost money after costs. Three sleeves made the book: momentum with weekday "
+        "exposure halved (Seasonality), a 10-day taker-imbalance follower (Orderflow) and a "
+        "funding carry trade (Carry). On the lockbox the walk-forward book returned "
+        f"{pct(lk_wf['ret'])} a year at {pct(lk_wf['vol'])} volatility, a Sharpe of "
+        f"{lk_wf['sharpe']:.2f}, with a beta to BTC of {lk_wf['beta']:+.2f}; the equal-weight "
+        f"book had a Sharpe of {lk_ew['sharpe']:.2f}. The deflated Sharpe on the lockbox is "
+        f"{v['dsr_lk']:.2f}, well short of the usual 0.95 bar, so the result is positive but "
+        "not statistically proven.\n\n"
+        "An audit after the lockbox found that the Seasonality backtest never paid for the "
+        "trades that resize its book twice a week. Charged properly, that sleeve would not have "
+        "passed selection. Re-scoring the same frozen book with those trades charged moves the "
+        f"lockbox Sharpe to {bookc[('WF', 'Lockbox')]['sharpe']:.2f} (walk-forward) and "
+        f"{bookc[('EW', 'Lockbox')]['sharpe']:.2f} (equal weight). Section 5 has the details; "
+        "the conclusion does not change."
     )
 
-    # Section 1: Project and data
-    pdf.h1("1. Project and data")
+    # 1. Data and method
+    pdf.h1("1. Data and method")
+    pdf.bullets([
+        f"Daily klines for the top 150 Binance USDT pairs by volume, 2018-01 to 2026-07 "
+        f"({price.shape[1]} names returned data). Close, USD volume and taker-buy volume are kept.",
+        f"Hourly klines for the {n_hourly} names with the highest 30-day volume at fetch time, "
+        "2020-01 to 2026-07. The hourly research starts in 2020-06.",
+        f"Perpetual funding rates for the same {n_hourly} names where a perp exists "
+        f"({funding.shape[1]} names), summed per day, from {funding.index.min():%Y-%m}.",
+        "The data was fetched on 2026-07-06, so that last day is a partial day in every panel.",
+    ])
     pdf.body(
-        "Data is fetched live from Binance public APIs and cached locally:\n"
-        "- Daily klines, top-150 USDT pairs, 2018-01 to 2026-07 (149 names with data).\n"
-        "- Hourly klines, top-60 pairs by trailing ADV, used from 2020-06.\n"
-        "- Perpetual funding rates from Binance fapi, 2019-09 onward.\n"
-        "- Taker-buy volume from the daily klines.\n\n"
-        "The tradable universe is point-in-time: a coin qualifies on date t if its "
-        "trailing 30-day median dollar-volume clears the bar, computed on t-1 data only. "
-        "Stablecoins are excluded. Evaluation starts 2020-01-01; data before then is "
-        "too sparse for stable cross-sectional signals.\n\n"
-        "Cost model: 20 bps per unit of turnover for market orders (momentum sleeves, "
-        "7 bps commission + 13 bps slippage) and 7 bps for limit orders "
-        "(pairs, carry and orderflow). Costs are charged on turnover each day."
+        "The tradable universe is point-in-time: on each day, the 100 coins with the highest "
+        "30-day median dollar volume, using data up to the day before, with a $1M floor and at "
+        "least 30 days of history. Stablecoins, wrapped coins and leveraged tokens are excluded. "
+        f"The median universe since 2020 has {uni_size} names.\n\n"
+        "The backtest applies weights set at the close of day t to the return of day t+1, so no "
+        "position uses information it could not have had. Costs are charged on turnover every "
+        "day: 20 bps per dollar traded for market orders (7 bps commission plus 13 bps "
+        "slippage) and 7 bps for limit orders. The momentum sleeves take liquidity and pay "
+        "20 bps; orderflow, carry and pairs rebalance passively and pay 7 bps. Backtests are "
+        "unconstrained, and Sharpe ratios are annualised with 365 days."
     )
-    pdf.table_block(validation_protocol_table(),
-                    title="Validation protocol: three non-overlapping windows")
-    pdf.caption(
-        "The lockbox window was opened once, in notebook 06, after every selection "
-        "decision had been made."
+    pdf.table_block([
+        ["Window", "Dates", "Used for"],
+        ["Development", f"{DEV_START} to {DEV_END}", "choosing signals and parameters"],
+        ["Gate", f"{GATE_START} to {GATE_END}", "a hold-out check before anything is kept"],
+        ["Lockbox", f"{LOCKBOX_START} to {LOCKBOX_END}", "one final run of the frozen book"],
+    ], title="Validation windows", widths=(22, 38, 60), align=("LEFT", "LEFT", "LEFT"))
+    pdf.caption("The lockbox was read once, in notebook 06, after every selection decision had "
+                "been made. Section 5 re-scores the same book after an audit and says so.")
+
+    # 2. Baselines
+    pdf.h1("2. Baselines: momentum and pairs")
+    pdf.body(
+        "Two standard strategies serve as baselines. Time-series momentum "
+        "holds each coin long or short by the sign of its 30-day return (skipping the latest "
+        "day) and scales the book to 15% volatility. The pairs sleeve re-selects up to 20 "
+        "correlated pairs every 63 days, opens a spread when its z-score passes 2 and holds it "
+        "until the z-score passes 2 on the other side."
+    )
+    pdf.table_block(perf_rows(base, [("momentum", "Dev"), ("momentum", "Gate"),
+                                     ("reversal", "Dev"), ("reversal", "Gate")],
+                              ["Momentum, dev", "Momentum, gate", "Pairs, dev", "Pairs, gate"]),
+                    title="Baseline sleeves", widths=PERF_WIDTHS)
+    pdf.body(
+        f"Momentum's Sharpe falls from {sr(base[('momentum', 'Dev')]['sharpe'])} on dev to "
+        f"{sr(base[('momentum', 'Gate')]['sharpe'])} on the gate. Pairs loses money on dev "
+        f"({sr(base[('reversal', 'Dev')]['sharpe'])}), so it is dropped even though the gate "
+        f"was positive ({sr(base[('reversal', 'Gate')]['sharpe'])}). Momentum stays as the "
+        "starting point for the seasonality work."
     )
 
-    # Section 2: The decay chapter
-    pdf.h1("2. Baselines")
-    pdf.body(
-        "The two baselines are a time-series momentum sleeve (30-day lookback, 15% vol "
-        "target) and a pairs reversal sleeve (correlation and half-life selection, top 20 "
-        "pairs, entry at 2 sigma). Run on the Binance "
-        "panel through 2025-06-30:"
-    )
-    pdf.table_block(incumbent_decay_table(mom_base, rev_base),
-                    title="Baseline sleeves: dev (2020-01 to 2024-07) vs gate (2024-08 to 2025-06)")
-    pdf.body(
-        f"Momentum is strong on dev ({mom_dev_sr:+.2f}) and much weaker on the gate ({mom_gate_sr:+.2f}). "
-        f"Pairs is negative on dev ({rev_dev_sr:+.2f}) and positive on the gate ({rev_gate_sr:+.2f}), "
-        "which is not enough to keep it.\n\n"
-        "twsq backtests of the three final sleeves (Binance daily bars, 2024-08 to 2026-07, 701 days): "
-        f"SeasonalMomentum Sharpe {twsq_seas_sr:+.2f}, OrderflowFollow {twsq_of_sr:+.2f}, FundingCarry {twsq_carry_sr:+.2f}. "
-        "The carry figure is low partly because the twsq backtest holds spot, so it earns "
-        "none of the funding the research sleeve collects."
-    )
-
-    # Section 3: The alpha hunt
+    # 3. Research families
     pdf.h1("3. Research families")
     pdf.body(
-        "Four families were tested on the dev and gate windows. A config survives only if "
-        "it is positive on both windows and passes its family's extra rule (beating the "
-        "baseline, or a positive neighbouring parameter); the notebooks state each rule. "
-        "The registry in the appendix lists all 50 rows."
+        "Each family starts from a simple trading idea and was tested on dev and gate "
+        "only. A config survives if it is positive on both windows and passes its family's "
+        "extra rule: beat the untilted sleeve (seasonality), beat the unfiltered baseline "
+        "(conditioned reversals), or have a neighbouring parameter that is also positive. "
+        "The appendix lists all 50 registry rows."
     )
-
-    # 3.1 Seasonality
-    pdf.h2("3.1 Seasonality (calendar tilts on momentum)")
+    pdf.h2("3.1 Seasonality: who trades when")
     pdf.body(
-        "Idea: institutions trade on weekdays and in US hours, retail at night and at "
-        "weekends, so trend signals may behave differently by calendar bucket. We tested "
-        "12 configs: weekday/weekend scaling of the momentum sleeve, long-flat market timing "
-        "by bucket, an hourly off-hours test and a turn-of-month tilt.\n\n"
-        f"Survivor: scaling the momentum sleeve to 0.5x on weekdays and 1.0x on weekends "
-        f"(weekday=0.5, weekend=1.0) gives dev {seas_dev_sr:+.2f}, gate {seas_gate_sr:+.2f}. "
-        "This is the Seasonality sleeve in the final book."
+        "Institutions trade more on weekdays and in US hours, retail at night and at weekends. "
+        "If informed flow trends, momentum should behave differently by calendar bucket. Twelve "
+        "configs were tested: weekday/weekend scaling of the momentum sleeve, holding the market "
+        "only in some calendar buckets, an hourly US-hours test and a turn-of-month tilt.\n\n"
+        f"The survivor halves momentum's exposure on weekdays: dev {sr(seas_dev)} and gate "
+        f"{sr(seas_gate)}, against {sr(unt_dev)} and {sr(unt_gate)} for the untilted sleeve. "
+        "Almost all of the equal-weight market's return came outside US hours, but trading on "
+        "that split lost money on the gate."
     )
-    pdf.table_block(family_table(reg, "seasonality"), title="Seasonality trials")
-
-    # 3.2 Orderflow
-    pdf.h2("3.2 Orderflow (taker imbalance signal)")
+    pdf.table_block(family_rows(reg, "seasonality"), title="Seasonality configs", widths=(80, 20, 20))
+    pdf.h2("3.2 Order flow: the taker-buy share")
     pdf.body(
-        "Idea: sustained taker-buy pressure predicts short-term continuation. "
-        "Signal: cross-sectional z-score of the 10-day mean of (taker share - 0.5). "
-        "Reversal on quiet names and on flow-unconfirmed moves was tested as well.\n\n"
-        f"Survivor: 10-day smoothing, follow direction (dev {of_dev_sr:+.2f}, gate {of_gate_sr:+.2f}). "
-        "This is the Orderflow sleeve. The unsmoothed (1-day) version loses on both windows, "
-        "and every reversal variant is negative on dev."
+        "Binance klines report how much volume came from aggressive buyers. The uninformed-flow "
+        "argument says reversal should work best on moves without real flow behind them, so "
+        "reversal was tested on quiet names and on moves the flow did not confirm. The "
+        "imbalance itself was also tested as a signal, in both directions.\n\n"
+        f"Every reversal variant loses on dev. Following the 10-day average imbalance survives "
+        f"(dev {sr(of_dev)}, gate {sr(of_gate)}), and the 5-day version is also positive; the "
+        "1-day version loses on both windows. Fading the imbalance is the mirror image and loses."
     )
-    pdf.table_block(family_table(reg, "orderflow"), title="Orderflow trials")
-
-    # 3.3 Funding carry
-    pdf.h2("3.3 Funding carry (short high-funding perps)")
+    pdf.table_block(family_rows(reg, "orderflow"), title="Order-flow configs", widths=(80, 20, 20))
+    pdf.h2("3.3 Funding carry and crowding")
     pdf.body(
-        "Idea: persistently high perp funding marks crowded longs, and the short side "
-        "collects the funding. Signal: minus the z-score of 7-day mean funding across the "
-        "names with a perp. Reversal in crowded names and the change in funding were tested "
-        "as well.\n\n"
-        f"Survivor: 7-day smoothing (dev {carry_dev_sr:+.2f}, gate {carry_gate_sr:+.2f}). "
-        "This is the Carry sleeve. Its twsq version (spot only, so no funding income) shows "
-        f"a Sharpe of {twsq_carry_sr:+.2f} over 2024-08 to 2026-07."
+        "Longs pay funding when it is positive, so high funding is both carry for the short side "
+        "and a sign of crowded positioning. The carry sleeve shorts high-funding names and buys "
+        "low-funding ones, and the backtest adds the funding payments to the price P&L.\n\n"
+        f"Carry on 7-day smoothed funding survives (dev {sr(ca_dev)}, gate {sr(ca_gate)}), and "
+        "so do its neighbours. Reversal in crowded names loses. Fading the change in funding "
+        "also passes, but it is a crowding trade with a much weaker dev result, so carry was kept."
     )
-    pdf.table_block(family_table(reg, "carry"), title="Funding carry trials")
-
-    # 3.4 Fast reversal
-    pdf.h2("3.4 Fast reversal (hourly cross-sectional, no survivor)")
+    pdf.table_block(family_rows(reg, "carry"), title="Funding configs", widths=(80, 20, 20))
+    pdf.h2("3.4 Fast reversal (hourly)")
     pdf.body(
-        "Idea: daily reversal has a gross edge that costs remove. If the edge comes from "
-        "liquidity provision it should be larger at intraday horizons. Rule set in advance: "
-        "a config needs a gross return of at least 3x its cost drag before any tuning.\n\n"
-        "The 4-hour lookback has the highest gross Sharpe (+4.83), so a faster reversal "
-        "edge does exist. But its cost drag (461% a year) is about 1.7 times the gross "
-        "return (272% a year), and no config passes the 3x screen."
+        "If short-horizon reversal comes from providing liquidity, it should be stronger "
+        "intraday. The rule, set before testing: a config must earn a gross return of at least "
+        "3 times its cost drag before it is worth tuning.\n\n"
+        f"The 4-hour lookback has a gross Sharpe of {fr4.gross_sharpe_dev:+.2f}, so the edge is "
+        f"real, but hourly rebalancing costs {fr4.cost_drag_ann:.0%} a year against a gross "
+        f"return of {fr4.gross_ann:.0%}, about {fr4.cost_drag_ann / fr4.gross_ann:.1f} times as "
+        "much. No config comes close to the 3x rule, and net Sharpe is negative for all eight "
+        "on both windows."
     )
-    pdf.table_block(fastrev_highlight_table(), title="Fast reversal: gross edge vs cost drag (notebook 05)")
+    fr_rows = [["Lookback, rebalance", "Gross Sharpe", "Gross/yr", "Cost/yr", "Ratio", "Net dev", "Net gate"]]
+    for _, g in grid.iterrows():
+        fr_rows.append([f"{int(g.lookback_h)}h, every {int(g.rebal_h)}h", f"{g.gross_sharpe_dev:+.2f}",
+                        f"{g.gross_ann:.0%}", f"{g.cost_drag_ann:.0%}", f"{g.gross_over_drag:.2f}",
+                        f"{g.net_dev:+.2f}", f"{g.net_gate:+.2f}"])
+    pdf.table_block(fr_rows, title="Fast reversal on the dev window (hourly, annualised with 8,760 hours)",
+                    widths=(34, 16, 15, 14, 12, 14, 15))
+
+    # 4. The book
+    pdf.h1("4. The book")
+    pdf.body(
+        "The book holds Seasonality, Orderflow and Carry. The main version uses walk-forward "
+        "max-Sharpe weights, refitted every 63 days on the previous 756 days; an equal-weight "
+        "version runs alongside. Both combination rules were fixed before the lockbox and are "
+        "logged in the registry."
+    )
+    c = v["corr"]
+    pdf.table_block([[""] + [n.capitalize() for n in c.columns]]
+                    + [[i.capitalize()] + [f"{x:.2f}" for x in c.loc[i]] for i in c.index],
+                    title="Sleeve correlations on the dev window", widths=(30, 25, 25, 25))
+    pdf.table_block(perf_rows(book, [("WF", w) for w in WINDOWS] + [("EW", w) for w in WINDOWS],
+                              [f"Walk-forward, {w.lower()}" for w in WINDOWS]
+                              + [f"Equal weight, {w.lower()}" for w in WINDOWS]),
+                    title="Book performance by window (alpha and beta from a regression on BTC and "
+                          "the equal-weight market)", widths=PERF_WIDTHS)
     pdf.caption(
-        "Annualised with 8,760 hours a year. Five of the eight configs are shown (the ones "
-        "with the largest gross edge); the gross-to-drag ratio is below 1 for all eight."
+        "The walk-forward book needs 756 days of history before its first weights, so it starts "
+        "in 2021-10 and its dev figure covers only 2021-10 to 2024-07. Equal weight beats "
+        "walk-forward on every window except the lockbox: with three nearly uncorrelated sleeves "
+        "there is little for mean-variance weights to add."
     )
-
-    # Section 4: The book and the lockbox
-    pdf.h1("4. The book and the lockbox")
-    pdf.body(
-        "The final book combines Seasonality, Orderflow and Carry with walk-forward "
-        "max-Sharpe weights, re-fitted every 63 days on the previous 756 days. An "
-        "equal-weight book is shown alongside."
-    )
-
-    pdf.h2("4.1 Sleeve correlations")
-    pdf.body(
-        "The three sleeves are nearly uncorrelated over the dev window, which limits "
-        "the benefit of mean-variance weighting over simple equal-weighting."
-    )
-    pdf.table_block(sleeve_corr_table(seas, of, carry), title="Dev-window sleeve pairwise correlation")
-
-    pdf.h2("4.2 Performance across windows")
-    pdf.table_block(windows_table(cp), title="Walk-forward and equal-weight book by window")
-    pdf.caption(
-        "The walk-forward book needs 756 days of training, so its dev figure (+0.40) only "
-        "covers 2021-10 to 2024-07; equal weight uses the whole dev window (1,674 days). "
-        "Equal weight beats walk-forward on every window except the lockbox."
-    )
-
-    pdf.h2("4.3 Equity curve and weight path")
+    names = ["seasonality", "orderflow", "carry"]
+    pdf.table_block(perf_rows(sl, [(n, w) for n in names for w in ["Dev", "Gate", "Lockbox"]],
+                              [f"{n.capitalize()}, {w.lower()}" for n in names
+                               for w in ["Dev", "Gate", "Lockbox"]]),
+                    title="Sleeve performance by window", widths=PERF_WIDTHS)
     pdf.figure(figs["equity"])
-    pdf.caption(
-        "Top: cumulative return (log scale). Dotted navy line = gate start (2024-08-01); "
-        "dashed red line = lockbox open (2025-07-01). "
-        "Middle: walk-forward drawdown. Bottom: rolling 180-day Sharpe."
-    )
+    pdf.caption("Top: growth of $1 on a log scale. Middle: walk-forward drawdown. Bottom: rolling "
+                "180-day Sharpe of the walk-forward book.")
     pdf.figure(figs["weights"])
-    pdf.caption(
-        "Walk-forward sleeve weights, re-estimated every 63 days on the previous 756 days."
+    pdf.caption("The weights the walk-forward book used. They can go negative, and their absolute "
+                "values sum to 1.")
+
+    pdf.h2("4.1 The lockbox result")
+    pdf.body(
+        f"Over the lockbox ({v['lk_n']} days) the walk-forward book made {pct(lk_wf['ret'])} a "
+        f"year with {pct(lk_wf['vol'])} volatility and a worst drawdown of {pct(lk_wf['mdd'])}. "
+        f"Its Sharpe of {lk_wf['sharpe']:.3f} has a block-bootstrap 95% interval of "
+        f"[{lo:.2f}, {hi:.2f}], which includes zero. Regressed on BTC and the equal-weight market "
+        f"it has an alpha of {pct(lk_wf['alpha'], 2)} a year (Newey-West t = "
+        f"{lk_wf['alpha_t']:.2f}) and a BTC beta of {lk_wf['beta']:+.3f}.\n\n"
+        f"By sleeve, Orderflow ({sr(sl[('orderflow', 'Lockbox')]['sharpe'])}) and Carry "
+        f"({sr(sl[('carry', 'Lockbox')]['sharpe'])}) held up, while Seasonality lost money "
+        f"({sr(sl[('seasonality', 'Lockbox')]['sharpe'])}). Its strong gate result did not carry "
+        "over, which is the risk notebook 02 flagged for an 11-month gate."
+    )
+    pdf.table_block([
+        ["", "Full sample", "Lockbox"],
+        ["Walk-forward Sharpe", f"{book[('WF', 'Full')]['sharpe']:.2f}", f"{lk_wf['sharpe']:.2f}"],
+        ["Block-bootstrap 95% CI", "", f"[{lo:.2f}, {hi:.2f}]"],
+        [f"Deflated Sharpe ({N_TRIALS} trials)", f"{v['dsr_full']:.3f}", f"{v['dsr_lk']:.3f}"],
+    ], title="Significance", widths=(60, 30, 30))
+    pdf.body(
+        "The deflated Sharpe is the probability that the observed Sharpe beats the best Sharpe "
+        f"that {N_TRIALS} strategies with no real edge would show by luck. It is "
+        f"{v['dsr_full']:.2f} on the full "
+        f"sample and {v['dsr_lk']:.2f} on the lockbox, both far below 0.95. One year is also "
+        f"short: the bootstrap interval above is {hi - lo:.1f} Sharpe points wide. The book did "
+        "make money with almost no market exposure, but this sample cannot separate that from "
+        "luck."
     )
 
-    pdf.h2("4.4 Lockbox verdict")
+    # 5. Post-hoc checks
+    pdf.h1("5. Checks added after the lockbox")
     pdf.body(
-        "The lockbox (2025-07-01 to 2026-07-06, 371 days, opened once) gives:\n"
-        "- Walk-forward Sharpe: +1.458  |  Equal-weight Sharpe: +1.233\n"
-        "- BTC beta: -0.020  (via joint BTC + market regression)\n"
-        "- Annualised alpha: 9.48%  |  Alpha t-stat: 1.25  (HAC, not significant)\n"
-        f"- Block-bootstrap 95% CI for the walk-forward Sharpe: {_ci_txt}.\n\n"
-        "Sleeves on the lockbox: Orderflow +1.95 and Carry +0.88 held up; Seasonality came "
-        "in at -0.57, so its gate outperformance did not last, which is the regime risk "
-        "flagged in notebook 02.\n\n"
-        "Performance is positive with almost no market exposure, but at this sample size "
-        "and trial count it cannot be told apart from selection luck."
+        "Notebook 07 was added in September 2026, after the lockbox had been opened. It changes "
+        "nothing in the book and logs no trials; it measures three things the audit raised."
     )
-    pdf.table_block(lockbox_alpha_table(vals), title="Lockbox alpha / beta (HAC Newey-West)")
-    pdf.table_block(significance_table(cp, vals, (boot_lo, boot_hi)), title="Significance summary")
+    pdf.h2("5.1 The cost of resizing the Seasonality sleeve")
     pdf.body(
-        f"The deflated Sharpe accounts for all {N_ALPHA_TRIALS} research trials in the "
-        "registry (baselines, seasonality, orderflow, carry, fast reversal). It is 0.490 on "
-        "the full sample and 0.205 on the lockbox, both below the usual 0.95 bar. The result "
-        "is positive but not statistically proven."
+        "The Seasonality overlay multiplies each day's return by 0.5 on weekdays and 1.0 at "
+        "weekends. That is the same as trading down to half size every Monday and back up every "
+        "Saturday, but the backtest never charged for those trades. Rebuilding the positions "
+        "actually held and charging 20 bps on every change costs the sleeve "
+        f"{pct(v['resize_cost'])} a year on dev:"
+    )
+    pdf.table_block([
+        ["", "Dev", "Gate", "Lockbox"],
+        ["Seasonality, as run", sr(sl[("seasonality", "Dev")]["sharpe"]),
+         sr(sl[("seasonality", "Gate")]["sharpe"]), sr(sl[("seasonality", "Lockbox")]["sharpe"])],
+        ["Seasonality, every trade charged", sr(seas_c["Dev"]), sr(seas_c["Gate"]), sr(seas_c["Lockbox"])],
+        ["Untilted momentum, every trade charged", sr(unt_c["Dev"]), sr(unt_c["Gate"]), "not run"],
+    ], title="Seasonality with and without the resizing cost (Sharpe)", widths=(70, 17, 17, 17))
+    pdf.body(
+        "Charged properly, the overlay still beats untilted momentum on the gate but not on dev, "
+        "so it would have failed notebook 02's rule. The error is in the cost accounting; the "
+        "signal itself is computed correctly. The frozen book was left alone, and the whole book "
+        "was re-scored with the charged sleeve instead:"
+    )
+    pdf.table_block(
+        [["", "As run", "Resizing charged"]]
+        + [[f"{'Walk-forward' if b == 'WF' else 'Equal weight'} Sharpe, {w.lower()}",
+            f"{book[(b, w)]['sharpe']:.2f}", f"{bookc[(b, w)]['sharpe']:.2f}"]
+           for b in ["WF", "EW"] for w in WINDOWS]
+        + [["Walk-forward lockbox 95% CI", f"[{lo:.2f}, {hi:.2f}]", f"[{lo_c:.2f}, {hi_c:.2f}]"],
+           ["Deflated Sharpe, full", f"{v['dsr_full']:.3f}", f"{v['dsr_full_c']:.3f}"],
+           ["Deflated Sharpe, lockbox", f"{v['dsr_lk']:.3f}", f"{v['dsr_lk_c']:.3f}"],
+           ["Walk-forward lockbox beta to BTC", f"{lk_wf['beta']:+.3f}",
+            f"{bookc[('WF', 'Lockbox')]['beta']:+.3f}"]],
+        title="The frozen book, as run and with the resizing charged", widths=(70, 25, 25))
+    pdf.body(
+        "On the lockbox the change is small and goes both ways. The walk-forward book gains "
+        "slightly: with the weaker charged sleeve in its training data it gives Seasonality less "
+        f"weight (an average of {v['lk_weight']['charged']['seasonality']:.2f} over the lockbox, "
+        f"against {v['lk_weight']['as run']['seasonality']:.2f} as run), and Seasonality lost "
+        "money on the lockbox. The equal-weight book loses a little. Over the full sample the "
+        "walk-forward Sharpe drops from "
+        f"{book[('WF', 'Full')]['sharpe']:.2f} to {bookc[('WF', 'Full')]['sharpe']:.2f}."
+    )
+    pdf.h2("5.2 Higher costs for Orderflow and Carry")
+    rows = [["Cost per dollar traded", "Orderflow dev", "Orderflow gate", "Carry dev", "Carry gate"]]
+    for bps in [7, 14, 20]:
+        rows.append([f"{bps} bps", sr(stress.loc[("orderflow", bps), "dev"]),
+                     sr(stress.loc[("orderflow", bps), "gate"]), sr(stress.loc[("carry", bps), "dev"]),
+                     sr(stress.loc[("carry", bps), "gate"])])
+    pdf.table_block(rows, title="Sharpe at higher costs (dev and gate only)", widths=(40, 20, 20, 20, 20))
+    pdf.body(
+        "Both sleeves assume their daily rebalancing fills as limit orders at 7 bps. If every "
+        "trade had to cross the spread at 20 bps, both would stay positive, but Orderflow would "
+        f"lose {of_cut:.0%} of its dev Sharpe; it trades {pct(v['turnover']['orderflow'], 0)} of "
+        f"its book a day on dev. Carry trades {pct(v['turnover']['carry'], 0)} a day and earns "
+        "much of its P&L from funding, so it is less exposed to costs."
+    )
+    pdf.h2("5.3 Where the carry P&L comes from")
+    pdf.table_block([
+        ["", "Price leg/yr", "Funding leg/yr", "Funding share", "Price Sharpe", "Funding Sharpe"],
+        *[[w.capitalize(), pct(split.loc[w, "price leg, mean %/yr"]), pct(split.loc[w, "funding leg, mean %/yr"]),
+           pct(split.loc[w, "funding share of total"], 0), f"{split.loc[w, 'price leg sharpe']:.2f}",
+           f"{split.loc[w, 'funding leg sharpe']:.2f}"] for w in ["dev", "gate"]],
+    ], title="Carry sleeve: price and funding legs (arithmetic annual means)",
+        widths=(18, 22, 24, 20, 18, 20))
+    pdf.body(
+        "On dev most of the carry return is funding income, and the funding leg on its own is "
+        "very smooth. On the gate the price leg did more of the work. A spot-only version of the "
+        "trade, like the twsq one in section 6, earns only the price leg."
     )
 
-    # Section 5: Limitations
-    pdf.h1("5. Limitations")
+    # 6. twsq
+    pdf.h1("6. The sleeves in twsq")
     pdf.body(
-        "Survivorship bias. The daily universe is rebuilt from the pairs Binance listed "
-        "when the data was fetched (July 2026), so coins delisted earlier are missing. The "
-        "point-in-time liquidity screen and the three-window split reduce this but cannot "
-        "remove it.\n\n"
-        "Single exchange. Volume data comes from Binance only. Taker imbalance and "
-        "funding rates are Binance-specific; the signal on other venues may differ.\n\n"
-        "Spot prices for a perp trade. The carry sleeve adds Binance funding payments to "
-        "spot returns. A real perp position would also carry the basis between perp and "
-        "spot, which the backtest ignores.\n\n"
-        "Seasonality on the lockbox. The Seasonality sleeve lost money on the lockbox "
-        "(-0.57 against +1.24 on the gate). One year cannot tell whether the weekend effect "
-        "has faded or was never there.\n\n"
-        "Capacity and higher costs untested. The book has not been sized for real money and "
-        "has not been rerun at higher costs. Carry and Orderflow trade top-100 names, but "
-        "large positions in the smaller ones would move prices.\n\n"
-        "Thin early hourly panel. The hourly work starts in 2020-06 because the hourly panel "
-        "is thin before that.\n\n"
-        "Statistical significance. Against 48 enumerated trials the deflated Sharpe stays "
-        "below 0.95 on both the full sample and the lockbox."
+        "alphas/ holds the three sleeves written as alphas for twsq, an execution "
+        "framework. twsq backtests them on Binance daily bars over 700 days (2024-08-06 to "
+        "2026-07-07) with the same costs. They differ from the research in ways that matter: "
+        "they trade a fixed list of 20 large coins instead of the point-in-time top 100, twsq "
+        "charges every trade (including the Seasonality resizing), and the carry alpha holds "
+        "spot, so it earns no funding. The signals only use data up to the previous day's close."
+    )
+    rows = [["Alpha", "Ann. return", "Ann. vol", "Sharpe", "Max DD", "Turnover/day", "Fees, total"]]
+    for name, r in tw.iterrows():
+        rows.append([name, pct(r["ann_return"]), pct(r["ann_vol"]), sr(r["sharpe"]), pct(r["max_drawdown"]),
+                     pct(r["avg_daily_turnover"], 0), pct(r["fees"])])
+    pdf.table_block(rows, title="twsq backtests, 2024-08-06 to 2026-07-07 (returns on $1M of capital)",
+                    widths=(34, 16, 14, 13, 14, 16, 13))
+    pdf.body(
+        "On 20 large coins none of the three does much. SeasonalMomentum is roughly flat, which "
+        "fits the charged Seasonality numbers in section 5. OrderflowFollow loses a little, so "
+        "the order-flow effect in the research seems to come from the wider, less liquid part of "
+        "the universe, which also limits how much money it could take. FundingCarry's price leg "
+        "is slightly positive, without the funding income that the research sleeve earns."
     )
 
-    # Section 6: Appendix (trial registry)
-    pdf.h1("6. Appendix: full trial registry (50 rows)")
-    pdf.body(
-        "Every configuration evaluated during the research is listed here in chronological "
-        "order. Dev = 2020-01-01 to 2024-07-31; Gate = 2024-08-01 to 2025-06-30. "
-        "Rows 49-50 are the portfolio combination entries (not alpha trials)."
-    )
-    pdf.table_block(registry_table(reg))
+    # 7. Limitations
+    pdf.h1("7. Limitations")
+    pdf.bullets([
+        "Survivorship. The universe is built from the pairs Binance listed on the fetch date, so "
+        "coins delisted earlier are missing. The hourly and funding panels are worse: their 60 "
+        "names were picked by volume at fetch time, which favours coins that did well. The "
+        "point-in-time universe limits which names can trade on each day but cannot add back the "
+        "missing ones.",
+        "One exchange. Prices, volumes, taker flow and funding all come from Binance.",
+        "Perp versus spot. The carry backtest adds funding payments to spot returns and ignores "
+        "the basis between perp and spot prices.",
+        "Limit-order fills. Orderflow and Carry assume every limit order fills at 7 bps. "
+        "Section 5.2 shows what higher costs would do.",
+        "Pairs baseline. The pairs engine does not charge for opening a position that a newly "
+        "selected pair already has on, or for closing pairs dropped at a rebalance. Charging them "
+        "would only lower a baseline that already loses money.",
+        "Cost of resizing. Scaling returns by a volatility target or a calendar multiplier does "
+        "not charge for the trades the resizing needs. For the volatility target this is small "
+        f"(it moves momentum's dev Sharpe by {v['untilted']['Dev'] - unt_c['Dev']:.2f}); for the "
+        "weekday overlay it is not, as section 5.1 shows.",
+        "Capacity. Nothing here was sized for real money. The twsq results suggest the order-flow "
+        "edge sits in smaller names, where large trades would move prices.",
+        "Sample size. The lockbox is one year, and the deflated Sharpe is below 0.95 on every "
+        "window.",
+    ])
 
-    # Write PDF
+    # Appendix
+    pdf.h1("Appendix: trial registry")
+    pdf.body(
+        "Every configuration tested, in the order it was run, with its dev "
+        f"({DEV_START} to {DEV_END}) and gate ({GATE_START} to {GATE_END}) Sharpe. Rows 1 to "
+        f"{N_TRIALS} are the research trials used for the deflated Sharpe; rows {N_TRIALS + 1} and "
+        f"{N_TRIALS + 2} are the two combination rules for the book."
+    )
+    rows = [["#", "Family", "Config", "Dev", "Gate"]]
+    for i, r in reg.iterrows():
+        dev, gate = float(r["dev_sharpe"]), float(r["gate_sharpe"])
+        rows.append([str(i + 1), FAMILY_LABEL[r["family"]], describe(r["family"], json.loads(r["config"])),
+                     sr(dev) if np.isfinite(dev) else "n/a", sr(gate) if np.isfinite(gate) else "n/a"])
+    pdf.table_block(rows, widths=(8, 22, 70, 12, 12), align=("RIGHT", "LEFT", "LEFT", "RIGHT", "RIGHT"))
+
     OUT.parent.mkdir(exist_ok=True)
     pdf.output(str(OUT))
-    pages = pdf.page
-    size_kb = OUT.stat().st_size // 1024
-    print(f"Wrote {OUT}  ({size_kb} KB, {pages} pages)")
-    return pages
+    print(f"Wrote {OUT} ({OUT.stat().st_size // 1024} KB, {pdf.page} pages)")
+    return pdf.page
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def main():
-    cp, bm, mom_base, rev_base, seas, of, carry, reg = load_inputs()
-    btc = bm["BTC"]
-    mkt = bm["MKT"]
-
-    print("Asserting Section 4 numbers...")
-    vals = assert_section4(cp, btc, mkt)
-    print("  All assertions passed.")
-
+    d = load_inputs()
+    print("Checking report numbers against the notebooks...")
+    v = compute(d)
+    print("  all checks passed")
     with tempfile.TemporaryDirectory() as td:
-        figs = make_figures(cp, btc, seas, of, carry, Path(td))
-        pages = build_pdf(
-            cp, btc, mkt, mom_base, rev_base, seas, of, carry, reg, vals, figs
-        )
-
-    if pages < 8:
-        raise RuntimeError(f"PDF has only {pages} pages, expected at least 8.")
-    print(f"Done. {pages} pages.")
+        figs = make_figures(d, Path(td))
+        build_pdf(d, v, figs)
 
 
 if __name__ == "__main__":
