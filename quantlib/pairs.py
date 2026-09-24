@@ -116,6 +116,13 @@ def backtest_pairs(
     score) tuples the way select_pairs does. borrow_bps_annual charges a daily
     carry on the short notional held (0 = off). info records the pairs chosen
     at each rebalance.
+
+    Two things to know when reading the results. Turnover is charged inside
+    each rebalance segment only: a newly selected pair that already has a
+    position on (from its z-score history) is not charged for opening it, and
+    a dropped pair is not charged for closing. And with exit=0, a spread
+    position is only closed or flipped when the z-score crosses the opposite
+    entry band.
     """
     logp = np.log(price)
     dates = returns.loc[start:].index
