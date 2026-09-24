@@ -73,7 +73,10 @@ def seasonal_scale(returns: pd.Series, weekend: float = 1.0, weekday: float = 1.
 
     The day of week is known in advance, so multiplying each day's realised return
     by a fixed weekday/weekend factor is a look-ahead-free timing overlay (it is
-    equivalent to sizing exposure up or down on those days).
+    equivalent to sizing exposure up or down on those days). It does not charge
+    for the trades that the resizing needs; see
+    strategies.seasonal_momentum_sleeve(charge_resizing=True) for a version that
+    does.
     """
     is_weekend = returns.index.dayofweek >= 5
     mult = pd.Series(np.where(is_weekend, weekend, weekday), index=returns.index)

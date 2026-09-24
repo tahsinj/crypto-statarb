@@ -91,14 +91,21 @@ def run(
     )
 
 
+def vol_target_scale(returns: pd.Series, target_vol: float = 0.10, halflife: int = 30,
+                     periods_per_year: int = TRADING_DAYS) -> pd.Series:
+    """Leverage that scales a return stream to target_vol, using vol through t-1."""
+    realised = returns.ewm(halflife=halflife, min_periods=halflife).std().shift(1)
+    realised_ann = realised * np.sqrt(periods_per_year)
+    return (target_vol / realised_ann).clip(upper=5.0)  # cap leverage
+
+
 def vol_target(returns: pd.Series, target_vol: float = 0.10, halflife: int = 30,
                periods_per_year: int = TRADING_DAYS) -> pd.Series:
     """Scale a return stream to a constant annualised target vol.
 
     The scale at t uses vol estimated through t-1 only, so the result stays
-    tradable.
+    tradable. Scaling the returns does not charge for the trades that changing
+    leverage would need; for a slowly moving scale that cost is small.
     """
-    realised = returns.ewm(halflife=halflife, min_periods=halflife).std().shift(1)
-    realised_ann = realised * np.sqrt(periods_per_year)
-    scale = (target_vol / realised_ann).clip(upper=5.0)  # cap leverage
+    scale = vol_target_scale(returns, target_vol, halflife, periods_per_year)
     return (returns * scale).rename(returns.name)

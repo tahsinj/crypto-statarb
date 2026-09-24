@@ -72,6 +72,7 @@ def seasonal_momentum_sleeve(
     cost_bps: float = 20.0,
     weekend: float = 1.0,
     weekday: float = 0.5,
+    charge_resizing: bool = False,
 ) -> pd.Series:
     """Momentum sleeve with weekday/weekend scaling (notebook 02 selection).
 
@@ -79,11 +80,31 @@ def seasonal_momentum_sleeve(
     defaults (weekend=1.0, weekday=0.5) are the configuration that passed
     notebook 02's gate check. Notebook 06 compares the output with
     sleeve_seasonality.parquet.
+
+    The default version charges costs on the momentum weights only, not on the
+    trades that resize the book when the multiplier or the vol-target scale
+    changes. charge_resizing=True rebuilds the daily positions actually held
+    (weights x vol scale x day multiplier) and charges cost_bps on every change
+    in them. Notebook 07 uses it to re-score the book; the frozen sleeve keeps
+    the default.
     """
-    mom = momentum_sleeve(price, returns, universe,
-                          lookback=lookback, target_vol=target_vol,
-                          cost_bps=cost_bps)
-    return signals.seasonal_scale(mom, weekend=weekend, weekday=weekday).rename("seasonality")
+    if not charge_resizing:
+        mom = momentum_sleeve(price, returns, universe,
+                              lookback=lookback, target_vol=target_vol,
+                              cost_bps=cost_bps)
+        return signals.seasonal_scale(mom, weekend=weekend, weekday=weekday).rename("seasonality")
+
+    sig = np.sign(signals.trailing_return(price, lookback, 1)).where(universe)
+    w = signals.signal_to_weights(sig, universe, long_short=False, gross_leverage=1.0)
+    raw = backtest.run(w, returns, cost_bps=cost_bps)
+    idx = raw.net_returns.index
+    scale = backtest.vol_target_scale(raw.net_returns, target_vol)
+    mult = pd.Series(np.where(idx.dayofweek >= 5, weekend, weekday), index=idx)
+    held = w.shift(1).reindex(idx).mul(scale * mult, axis=0)   # position held over day t
+    gross = (held * returns.reindex(idx)).sum(axis=1)
+    trades = (held - held.shift(1)).abs().sum(axis=1)           # trades made at close t-1
+    net = gross - trades * (cost_bps / 1e4)
+    return net.where(scale.notna()).rename("seasonality")
 
 
 def orderflow_sleeve(
