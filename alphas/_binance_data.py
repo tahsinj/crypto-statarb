@@ -5,14 +5,19 @@ the alphas can run in the twsq venv without the research package installed.
 
 Public API
 ----------
-taker_imbalance_history(symbols, days) -> pd.DataFrame
-    Daily taker-buy share (taker_quote_vol / total_quote_vol) for each symbol.
-    Columns = symbols, index = UTC date. NaN where a symbol has no Binance listing.
+taker_imbalance_history(symbols, days, end=None) -> pd.DataFrame
+    Daily taker-buy share (taker quote volume / total quote volume) for each
+    symbol. Columns = symbols, index = UTC date. NaN where a symbol has no
+    Binance listing.
 
-funding_history(symbols, days) -> pd.DataFrame
-    Daily sum of the 8h perp funding prints per symbol.
-    Columns = symbols present on Binance perps, index = UTC date.
-    Symbols without a perp listing are silently skipped (column not present).
+funding_history(symbols, days, end=None) -> pd.DataFrame
+    Daily sum of the 8h perp funding prints per symbol. Columns = symbols with
+    a Binance perp, index = UTC date. Symbols without a perp are left out.
+
+rows_before(frame, ts) -> pd.DataFrame
+    Rows dated strictly before the calendar day of ts. A daily row is only
+    complete once its UTC day has closed, so an alpha rebalancing at the start
+    of day D may use rows up to D-1.
 """
 from __future__ import annotations
 
@@ -43,6 +48,21 @@ def _get_json(url: str, retries: int = 4, pause: float = 0.5):
         except urllib.error.URLError:
             time.sleep(pause * (2 ** attempt))
     raise RuntimeError(f"failed to fetch {url} after {retries} attempts")
+
+
+def _window_ms(days: int, end: str | None) -> tuple[int, int]:
+    """(start_ms, end_ms) for the `days` calendar days ending at `end` (UTC)."""
+    end_ts = pd.Timestamp(end, tz="UTC") if end else pd.Timestamp.now("UTC").normalize()
+    end_ms = int(end_ts.timestamp() * 1000)
+    return end_ms - days * _INTERVAL_MS, end_ms
+
+
+def rows_before(frame: pd.DataFrame, ts) -> pd.DataFrame:
+    """Rows dated strictly before the calendar day of ts (see module docstring)."""
+    day = pd.Timestamp(ts).normalize()
+    if day.tzinfo is not None:
+        day = day.tz_localize(None)
+    return frame[frame.index < day]
 
 
 def _klines_one(pair: str, start_ms: int, end_ms: int) -> pd.DataFrame:
@@ -77,14 +97,13 @@ def _klines_one(pair: str, start_ms: int, end_ms: int) -> pd.DataFrame:
     return df[~df.index.duplicated(keep="last")]
 
 
-def taker_imbalance_history(symbols: list[str], days: int = 30) -> pd.DataFrame:
-    """Daily taker-buy share for each symbol over the last `days` calendar days.
+def taker_imbalance_history(symbols: list[str], days: int = 30, end: str | None = None) -> pd.DataFrame:
+    """Daily taker-buy share for each symbol over the `days` calendar days to `end`.
 
-    taker_share = taker_quote_volume / total_quote_volume.
-    Values lie between 0 and 1, with 0.5 meaning balanced flow. NaN for missing symbols.
+    taker_share = taker_quote_volume / total_quote_volume. Values lie between
+    0 and 1, with 0.5 meaning balanced flow. `end` defaults to today (UTC).
     """
-    end_ms = int(pd.Timestamp.now("UTC").normalize().timestamp() * 1000)
-    start_ms = end_ms - days * _INTERVAL_MS
+    start_ms, end_ms = _window_ms(days, end)
 
     series = {}
     for sym in symbols:
@@ -104,14 +123,13 @@ def taker_imbalance_history(symbols: list[str], days: int = 30) -> pd.DataFrame:
     return out
 
 
-def funding_history(symbols: list[str], days: int = 30) -> pd.DataFrame:
-    """Daily sum of 8-hourly perp funding rates over the last `days` calendar days.
+def funding_history(symbols: list[str], days: int = 30, end: str | None = None) -> pd.DataFrame:
+    """Daily sum of 8-hourly perp funding rates over the `days` calendar days to `end`.
 
-    Positive = longs paid shorts. Symbols without a Binance perp listing are
-    silently omitted (not returned as columns). The caller should drop NaN columns.
+    Positive = longs paid shorts. Symbols without a Binance perp are left out
+    (no column). `end` defaults to today (UTC).
     """
-    end_ms = int(pd.Timestamp.now("UTC").normalize().timestamp() * 1000)
-    start_ms = end_ms - days * _INTERVAL_MS
+    start_ms, end_ms = _window_ms(days, end)
 
     series = {}
     for sym in symbols:

@@ -4,12 +4,16 @@ Signal: minus the cross-sectional z-score of the 7-day mean perp funding rate.
 Short the names where longs pay the most funding, long the names where they
 pay the least. Dollar-neutral, limit orders at 7 bps.
 
-Known gap: the research sleeve holds perps and collects funding on its shorts,
-which is a large part of its P&L. twsq backtests spot positions only, so this
-version earns the price leg alone and understates the sleeve.
+Known gap: the research sleeve holds perps and collects funding on its shorts.
+In the research backtest funding is 63% of the sleeve's P&L on dev and 39% on
+the gate (notebook 07). twsq backtests spot positions only, so this version
+earns the price leg alone and understates the sleeve.
 
 Funding history comes from Binance's public /fapi/v1/fundingRate endpoint.
-prepare() downloads it once and drops symbols without a perp.
+prepare() downloads it once and drops symbols without a perp. A day's funding
+is complete only after its last print, so a rebalance at the start of day D
+uses days up to D-1. Limit orders left unfilled from the previous day are
+cancelled before new ones go in.
 """
 from twsq.alpha import Alpha
 import numpy as np
@@ -18,7 +22,7 @@ import pandas as pd
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _binance_data import funding_history
+from _binance_data import funding_history, rows_before
 
 
 SMOOTH = 7   # rolling window (days) for the funding signal
@@ -28,11 +32,12 @@ class FundingCarry(Alpha):
     def prepare(self, symbols, **kwargs):
         self.smooth = kwargs.get("smooth", SMOOTH)
         self.capital = kwargs.get("capital", 1_000_000)
-        hist_days = kwargs.get("hist_days", 730)
+        hist_days = kwargs.get("hist_days", 730)   # days of funding history to download
+        end = kwargs.get("end")                    # last day to download (UTC)
 
         # Download the whole window once; drop symbols without a perp.
         print(f"funding_carry: fetching {hist_days}d funding history from Binance")
-        raw = funding_history(symbols, days=hist_days)
+        raw = funding_history(symbols, days=hist_days, end=end)
         # all-NaN column = no perp on Binance
         raw = raw.dropna(axis=1, how="all")
         raw.index = pd.to_datetime(raw.index).normalize()
@@ -49,10 +54,8 @@ class FundingCarry(Alpha):
         return (series - mu) / sd
 
     def rebalance(self):
-        ts = pd.Timestamp(self.ts).normalize()
-
-        # Downloaded data up to the rebalance date.
-        hist = self._fund[self._fund.index <= ts].dropna(axis=1, how="all")
+        # Completed days only: up to the day before the rebalance.
+        hist = rows_before(self._fund, self.ts).dropna(axis=1, how="all")
         if len(hist) < self.smooth:
             return
 
@@ -88,6 +91,8 @@ class FundingCarry(Alpha):
         self._trade_limit(target)
 
     def _trade_limit(self, target: dict):
+        # Drop yesterday's unfilled orders so they cannot fill on top of today's.
+        self.cancel_all_orders()
         pos = self.get_pos()
         for symbol, tgt_qty in target.items():
             delta = tgt_qty - pos.get(symbol, 0.0)
@@ -123,8 +128,8 @@ symbols = ["BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "DOGE", "AVAX", "LINK", "DO
 
 if __name__ == "__main__":
     result = FundingCarry.run_backtest(
-        start_ts="20200101", freq="1d",
+        start_ts="20240806", end_ts="20260707", freq="1d",
         maker_fee=7e-4, slip=0.0,
-        symbols=symbols, smooth=7, hist_days=730,
+        symbols=symbols, smooth=7, hist_days=730, end="2026-07-07",
     )
     print(result.pos_pnl.tail())

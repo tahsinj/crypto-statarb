@@ -6,7 +6,10 @@ aggressive selling. Dollar-neutral, limit orders at 7 bps.
 
 The taker-buy share comes from Binance spot klines (taker quote volume over
 total quote volume). prepare() downloads the whole history once, so
-rebalance() only has to slice a DataFrame.
+rebalance() only has to slice a DataFrame. A day's taker volume is known only
+after that day closes, so a rebalance at the start of day D uses days up to
+D-1. Limit orders left unfilled from the previous day are cancelled before new
+ones go in.
 """
 from twsq.alpha import Alpha
 import numpy as np
@@ -15,7 +18,7 @@ import pandas as pd
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _binance_data import taker_imbalance_history
+from _binance_data import rows_before, taker_imbalance_history
 
 
 SMOOTH = 10          # rolling mean window for the imbalance signal
@@ -26,12 +29,12 @@ class OrderflowFollow(Alpha):
         self.symbols = symbols
         self.smooth = kwargs.get("smooth", SMOOTH)
         self.capital = kwargs.get("capital", 1_000_000)
-        # days of taker history to download
-        hist_days = kwargs.get("hist_days", 730)
+        hist_days = kwargs.get("hist_days", 730)   # days of taker history to download
+        end = kwargs.get("end")                    # last day to download (UTC)
 
         # Download the whole window once; rebalance() only slices it.
         print(f"orderflow: fetching {hist_days}d taker history from Binance")
-        raw = taker_imbalance_history(self.symbols, days=hist_days)
+        raw = taker_imbalance_history(self.symbols, days=hist_days, end=end)
         # Index by calendar date.
         raw.index = pd.to_datetime(raw.index).normalize()
         self._imb = raw
@@ -45,10 +48,8 @@ class OrderflowFollow(Alpha):
         return (series - mu) / sd
 
     def rebalance(self):
-        ts = pd.Timestamp(self.ts).normalize()
-
-        # Downloaded data up to the rebalance date.
-        hist = self._imb[self._imb.index <= ts]
+        # Completed days only: up to the day before the rebalance.
+        hist = rows_before(self._imb, self.ts)
         if len(hist) < self.smooth:
             return
 
@@ -85,6 +86,8 @@ class OrderflowFollow(Alpha):
         self._trade_limit(target)
 
     def _trade_limit(self, target: dict):
+        # Drop yesterday's unfilled orders so they cannot fill on top of today's.
+        self.cancel_all_orders()
         pos = self.get_pos()
         for symbol, tgt_qty in target.items():
             delta = tgt_qty - pos.get(symbol, 0.0)
@@ -120,8 +123,8 @@ symbols = ["BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "DOGE", "AVAX", "LINK", "DO
 
 if __name__ == "__main__":
     result = OrderflowFollow.run_backtest(
-        start_ts="20200101", freq="1d",
+        start_ts="20240806", end_ts="20260707", freq="1d",
         maker_fee=7e-4, slip=0.0,
-        symbols=symbols, smooth=10, hist_days=730,
+        symbols=symbols, smooth=10, hist_days=730, end="2026-07-07",
     )
     print(result.pos_pnl.tail())
