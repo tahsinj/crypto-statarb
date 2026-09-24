@@ -120,7 +120,10 @@ ca[["config", "dev_sharpe", "gate_sharpe", "note"]]
 # **Breadth.** Names in both the universe and the funding panel average about
 # 13 in 2020, 22 in 2021, 23 in 2022, 29 in 2023, 36 in 2024 and 44 in 2025.
 # Early dev results rest on a thin cross-section; the gate window is the more
-# reliable of the two.
+# reliable of the two. The funding panel only covers the 60 names with the
+# most volume at fetch time (July 2026), so it leans toward coins that
+# survived and grew; the point-in-time universe decides which of them can
+# trade on a given day, but coins that faded earlier are simply not there.
 #
 # **P1.** All three smoothings are positive on both windows:
 #   k=1:  dev +0.05, gate +1.75 (neighbour k=7 positive on both)
@@ -152,6 +155,10 @@ ca[["config", "dev_sharpe", "gate_sharpe", "note"]]
 # crowding trade rather than carry. It might work better as a filter on the
 # carry sleeve, which was not tested here. Choosing P1 keeps the sleeve what
 # its name says it is.
+#
+# Notebook 07 splits the sleeve's P&L into the funding and price legs:
+# funding is about 63% of it on dev and 39% on the gate. On the lockbox the
+# sleeve scored +0.88 (notebook 06).
 #
 # `sleeve_carry.parquet` is written below (column "carry").
 

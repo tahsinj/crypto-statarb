@@ -169,7 +169,7 @@ of[["config", "dev_sharpe", "gate_sharpe", "note"]]
 # 2024 and 99 in 2025. A 100-name dollar-neutral book diversifies much better
 # than a 20-name one, so part of the gap between gate (+2.12) and dev (+0.89)
 # may be mechanical rather than a change of regime. Notebook 06 checks the
-# sleeve on the lockbox.
+# sleeve on the lockbox, where it scored +1.95.
 #
 # **Survivor: P3 follow, k=10.** `sleeve_orderflow.parquet` is written below.
 

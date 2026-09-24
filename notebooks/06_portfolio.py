@@ -369,7 +369,7 @@ print(f"\nTotal rows: {len(reg_final)}")
 # cannot be told apart from selection luck.
 #
 # **Sleeves on the lockbox.** Orderflow (+1.95) and carry (+0.88) held up.
-# Seasonality came in at -0.57: its gate outperformance did not last, which is
+# Seasonality came in at -0.56: its gate outperformance did not last, which is
 # the regime risk flagged in notebook 02.
 #
 # **Equal weight vs walk-forward.** Equal weight beats walk-forward on dev,
@@ -380,3 +380,9 @@ print(f"\nTotal rows: {len(reg_final)}")
 # **Summary.** A diversified, low-beta book with a positive out-of-sample
 # result that is not statistically proven. The trial registry and the
 # deflated Sharpe are what keep that claim in proportion.
+#
+# **Added after the audit.** The seasonality sleeve's backtest never charged
+# for resizing the book between weekdays and weekends. Notebook 07 re-scores
+# this same book with those trades charged: walk-forward 1.490 and equal
+# weight 1.158 on the lockbox, deflated Sharpe 0.214. The numbers above are
+# left as they came out.

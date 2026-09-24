@@ -208,7 +208,18 @@ print(f"{len(survivors)} config(s) beat baseline on both windows")
 #
 # **Caveat.** The gate window is only 11 months (Aug 2024 to Jun 2025). Part
 # of the gate improvement could be a regime shift in that period rather than
-# a lasting effect. Notebook 06 checks it on the lockbox.
+# a lasting effect. Notebook 06 checks it on the lockbox, where the sleeve
+# came in at -0.56.
+#
+# **Added after the lockbox (see notebook 07).** `signals.seasonal_scale`
+# scales each day's return but does not charge for the trades that resize the
+# book: halving it every Monday and restoring it every Saturday. Charging
+# every trade at 20 bps costs this config about 2.7% a year on dev and takes
+# it to dev +1.51, gate +0.99. The untilted sleeve, charged the same way,
+# scores dev +1.64, gate +0.42. The overlay still wins on the gate but loses
+# on dev, so under the rule above it would not have been selected. The sleeve
+# is left as it was frozen; notebook 07 re-scores the book with the charged
+# version.
 
 best = signals.seasonal_scale(mom, weekend=1.0, weekday=0.5)
 best.rename("seasonality").to_frame().to_parquet(PROC / "sleeve_seasonality.parquet")
