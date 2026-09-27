@@ -87,6 +87,19 @@ def test_alpha_beta_recovers_known_beta():
     assert np.isfinite(ab["alpha_tstat"])
 
 
+def test_treynor_mazuy_separates_timing_from_alpha():
+    """A convex (market-timing) payoff shows up as a positive timing term, and
+    the timing-adjusted alpha is lower than the plain regression's alpha."""
+    rng = np.random.default_rng(5)
+    idx = pd.date_range("2020-01-01", periods=1400, freq="D")
+    m = pd.Series(rng.normal(0, 0.03, len(idx)), index=idx)
+    r = 5 * m ** 2 + pd.Series(rng.normal(0, 0.002, len(idx)), index=idx)
+    tm = metrics.treynor_mazuy(r, m)
+    plain = metrics.alpha_beta(r, m, names=["mkt"])
+    assert tm["timing"] > 0 and tm["timing_tstat"] > 3
+    assert tm["alpha_ann"] < plain["alpha_ann"]
+
+
 def test_sharpe_tstat_hac_finite():
     """The HAC (Newey-West) Sharpe t-stat is finite and same-signed as iid."""
     p = _toy_panels()

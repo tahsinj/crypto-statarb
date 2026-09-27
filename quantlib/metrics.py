@@ -235,6 +235,35 @@ def alpha_beta(
     return out
 
 
+def treynor_mazuy(
+    returns: pd.Series,
+    market: pd.Series,
+    freq: str = "W",
+    periods_per_year: int = 52,
+    max_lags: int = 4,
+) -> dict:
+    """Market-timing regression r = a + b*m + c*m**2 (Treynor and Mazuy, 1966).
+
+    A strategy that is long when the market rises and short when it falls, such
+    as trend following, has a convex payoff (c > 0). A plain regression on m
+    averages its changing beta to about zero and books the timing gain as
+    alpha; this one separates the two. Returns are compounded to `freq`
+    (weekly by default) because a trend book's exposure changes slowly, and
+    the standard errors are Newey-West.
+    """
+    df = pd.concat([returns.rename("r"), market.rename("m")], axis=1, sort=True).dropna()
+    agg = (1.0 + df).resample(freq).prod() - 1.0
+    X = sm.add_constant(pd.DataFrame({"m": agg["m"], "m2": agg["m"] ** 2}))
+    fit = sm.OLS(agg["r"], X).fit(cov_type="HAC", cov_kwds={"maxlags": max_lags})
+    return {
+        "alpha_ann": fit.params["const"] * periods_per_year,
+        "alpha_tstat": fit.tvalues["const"],
+        "beta": fit.params["m"],
+        "timing": fit.params["m2"],
+        "timing_tstat": fit.tvalues["m2"],
+    }
+
+
 # --- one-call summary ---
 def summary(
     returns: pd.Series,
