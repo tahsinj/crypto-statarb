@@ -17,7 +17,7 @@
 #
 # Added in September 2026, after notebook 06 had opened the lockbox. Nothing
 # here changes a sleeve, a parameter or the book, and none of it is a new
-# trial, so the registry is not touched. Three questions came up when the
+# trial, so the registry is not touched. Four questions came up when the
 # backtests were audited:
 #
 # 1. The seasonality overlay halves the book on Mondays and restores it on
@@ -28,6 +28,10 @@
 #    How much is left at 14 and 20 bps? (dev and gate only)
 # 3. How much of the carry sleeve's P&L comes from funding and how much from
 #    price? (dev and gate only)
+# 4. How did every strategy do over the whole sample, 2020-01 to 2026-07? The
+#    dev/gate/lockbox split is how the book was chosen and tested; this is
+#    the plain full-period view next to it, including the two baselines,
+#    which notebook 01 only ran up to the end of the gate.
 
 # +
 from pathlib import Path
@@ -203,6 +207,45 @@ carry_table = pd.DataFrame(split).T
 carry_table.round(3)
 # -
 
+# ## 4. Every strategy over the whole sample
+#
+# The baselines run with notebook 01's settings on the full panels. Up to
+# 2025-06-30 they have to match notebook 01's saved output, so the only new
+# information is the year after the gate.
+
+# +
+base_mom = strategies.momentum_sleeve(price, returns, universe, lookback=30,
+                                      target_vol=0.15, cost_bps=20).loc["2020-01-01":]
+base_rev = strategies.reversal_sleeve(price, returns, universe, cost_bps=7).loc["2020-01-01":]
+for name, s, col in [("sleeve_baseline_momentum", base_mom, "momentum"),
+                     ("sleeve_baseline_reversal", base_rev, "reversal")]:
+    saved = pd.read_parquet(PROC / f"{name}.parquet")[col]
+    both = pd.concat([s.loc[:"2025-06-30"], saved], axis=1, sort=True).dropna()
+    same = np.allclose(both.iloc[:, 0], both.iloc[:, 1], atol=1e-12)
+    print(f"{name}: {len(both)} days, matches notebook 01 up to 2025-06-30: {same}")
+    assert same
+
+series = {
+    "baseline momentum": base_mom, "baseline pairs": base_rev,
+    "seasonality": seas, "orderflow": orderflow, "carry": carry,
+    "book, walk-forward": asrun["walk_forward"], "book, equal weight": asrun["equal_weight"],
+    "BTC": bench["BTC"], "equal-weight market": bench["MKT"],
+}
+full_rows = {}
+for name, s in series.items():
+    r = s.loc[FULL].dropna()
+    row = {"from": r.index.min().date(), "ann_return": metrics.ann_return(r),
+           "ann_vol": metrics.ann_vol(r), "sharpe": metrics.sharpe(r),
+           "max_dd": metrics.max_drawdown(r)}
+    if name not in ("BTC", "equal-weight market"):
+        ab = metrics.alpha_beta(r, bench["BTC"], bench["MKT"], names=["BTC", "MKT"])
+        row.update(beta_btc=ab["beta_BTC"], beta_mkt=ab["beta_MKT"],
+                   alpha=ab["alpha_ann"], alpha_t=ab["alpha_tstat"])
+    full_rows[name] = row
+full_table = pd.DataFrame(full_rows).T
+full_table
+# -
+
 # ## Save for the report
 
 pd.concat([seas.rename("seasonality"), orderflow.rename("orderflow"), carry.rename("carry")],
@@ -214,7 +257,8 @@ pd.DataFrame({
 }).to_parquet(PROC / "posthoc_book.parquet")
 cost_table.reset_index().to_csv(PROC / "posthoc_cost_stress.csv", index=False)
 carry_table.rename_axis("window").reset_index().to_csv(PROC / "posthoc_carry_split.csv", index=False)
-print("saved sleeves_full, posthoc_book, posthoc_cost_stress, posthoc_carry_split")
+pd.DataFrame({"momentum": base_mom, "reversal": base_rev}).to_parquet(PROC / "baselines_full.parquet")
+print("saved sleeves_full, posthoc_book, posthoc_cost_stress, posthoc_carry_split, baselines_full")
 
 # ## Conclusion
 #
@@ -247,3 +291,14 @@ print("saved sleeves_full, posthoc_book, posthoc_cost_stress, posthoc_carry_spli
 # more, 41.2% against 26.9%. The funding leg on its own has a very high
 # Sharpe (4.8 on dev) because the payments are small and steady; the risk
 # sits in the price leg.
+#
+# **Whole sample.** From 2020 to July 2026 the equal-weight book returned
+# 25.6% a year at 13.4% volatility (Sharpe 1.76, worst drawdown -10.1%). The
+# walk-forward book, which starts in 2021-10, returned 8.1% at 7.9% (Sharpe
+# 1.02). Neither has much market exposure: every beta is within 0.03 of zero.
+# BTC returned 39.3% a year over the same period, but at 61% volatility and
+# with a -77% drawdown (Sharpe 0.86). Baseline momentum kept a Sharpe of 1.17
+# over the whole period and the pairs baseline lost money (-0.31). These
+# figures mix the windows the strategies were chosen on with the windows they
+# were tested on, so they summarise the history; the lockbox in notebook 06 is
+# the clean out-of-sample test.
