@@ -102,6 +102,52 @@ def capacity_curve(
     return out
 
 
+def impact_drag(
+    weights: pd.DataFrame,
+    returns: pd.DataFrame,
+    dollar_volume: pd.DataFrame,
+    aum: float,
+    y: float = 1.0,
+    window: int = 30,
+) -> pd.Series:
+    """Daily market-impact cost, per coin, of running ``weights`` with ``aum`` dollars.
+
+    Square-root law: trading Q dollars of a coin with daily volume V and daily
+    volatility sigma moves its price by about y * sigma * sqrt(Q / V), and the
+    trade pays that on Q. V is the trailing median of Binance volume and sigma
+    the trailing standard deviation of daily returns, both up to the day
+    before, so small, volatile coins cost the most. Returns the drag as a
+    fraction of the book, to subtract from the sleeve's net returns (which
+    already pay the fixed bps cost).
+    """
+    w = weights.reindex_like(returns).fillna(0.0)
+    trade = (w - w.shift(1)).abs()
+    adv = dollar_volume.reindex_like(returns).rolling(window, min_periods=window // 2).median().shift(1)
+    sigma = returns.rolling(window, min_periods=window // 2).std().shift(1)
+    impact = y * sigma * np.sqrt(trade * aum / adv.where(adv > 0))
+    return (impact * trade).sum(axis=1).rename("impact")
+
+
+def capacity_by_coin(
+    net_returns: pd.Series,
+    weights: pd.DataFrame,
+    returns: pd.DataFrame,
+    dollar_volume: pd.DataFrame,
+    aum_grid,
+    y: float = 1.0,
+) -> pd.DataFrame:
+    """Sharpe and return of a sleeve after per-coin impact, for each AUM in aum_grid."""
+    rows = {}
+    for aum in aum_grid:
+        drag = impact_drag(weights, returns, dollar_volume, aum, y=y).reindex(net_returns.index).fillna(0.0)
+        r = net_returns - drag
+        rows[aum] = {"sharpe": metrics.sharpe(r), "ann_return": metrics.ann_return(r),
+                     "impact_per_year": float(drag.mean() * 365)}
+    out = pd.DataFrame(rows).T
+    out.index.name = "AUM_usd"
+    return out
+
+
 def max_capacity(cap: pd.DataFrame, sharpe_floor_frac: float = 0.5) -> float:
     """Largest AUM whose Sharpe is still >= ``sharpe_floor_frac`` of the smallest-AUM Sharpe."""
     base = cap["sharpe"].iloc[0]

@@ -91,6 +91,57 @@ def run(
     )
 
 
+def run_limit_fills(
+    weights: pd.DataFrame,
+    returns: pd.DataFrame,
+    close: pd.DataFrame,
+    high: pd.DataFrame,
+    low: pd.DataFrame,
+    cost_bps: float = 7.0,
+) -> tuple[BacktestResult, pd.DataFrame]:
+    """Backtest where every trade is a limit order at the close it was decided on.
+
+    run() assumes each day's trades fill at the close. Here an order to buy at
+    the close of day t fills only if day t+1 trades below that price, and an
+    order to sell only if it trades above it. A filled order earns the move
+    from its limit price, so its P&L matches run(); an unfilled one is
+    cancelled, the old position is kept for the day, and the next close sends
+    a new order toward the new target. Orders miss exactly when the price runs
+    away from them, which run() cannot show. Costs are charged on filled
+    trades, on the day they fill. Returns the result and the positions held.
+    """
+    idx, cols = returns.index, returns.columns
+    w = weights.reindex(index=idx, columns=cols).fillna(0.0).to_numpy()
+    c = close.reindex(index=idx, columns=cols).to_numpy()
+    hi = high.reindex(index=idx, columns=cols).to_numpy()
+    lo = low.reindex(index=idx, columns=cols).to_numpy()
+    held = np.zeros_like(w)
+    traded = np.zeros(len(idx))
+    q = np.zeros(len(cols))
+    with np.errstate(invalid="ignore"):
+        for t in range(1, len(idx)):
+            order = w[t - 1] - q
+            fill = ((order > 0) & (lo[t] < c[t - 1])) | ((order < 0) & (hi[t] > c[t - 1]))
+            done = np.where(fill, order, 0.0)
+            q = q + done
+            held[t] = q
+            traded[t] = np.abs(done).sum()
+    held = pd.DataFrame(held, index=idx, columns=cols)
+    gross = (held * returns).sum(axis=1).iloc[1:]
+    turnover = pd.Series(traded, index=idx).iloc[1:]
+    costs = turnover * (cost_bps / 1e4)
+    res = BacktestResult(
+        gross_returns=gross.rename("gross"),
+        net_returns=(gross - costs).rename("net"),
+        turnover=turnover.rename("turnover"),
+        costs=costs.rename("costs"),
+        weights=weights,
+        cost_bps=cost_bps,
+        carry=pd.Series(0.0, index=gross.index, name="carry"),
+    )
+    return res, held
+
+
 def vol_target_scale(returns: pd.Series, target_vol: float = 0.10, halflife: int = 30,
                      periods_per_year: int = TRADING_DAYS) -> pd.Series:
     """Leverage that scales a return stream to target_vol, using vol through t-1."""

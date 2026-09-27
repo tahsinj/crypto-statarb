@@ -91,9 +91,15 @@ def _pair_stream(logp, returns, a, b, beta, idx, entry, exit, zwin):
     pr = ha * returns[a] + hb * returns[b]
     to = wa.diff().abs() + wb.diff().abs()
     short = ha.clip(upper=0).abs() + hb.clip(upper=0).abs()   # short notional held
+    # opening a position the pair already had when the segment starts, and
+    # closing whatever is left when it ends
+    edge = pd.Series(0.0, index=idx)
+    edge.iloc[0] += (ha.abs() + hb.abs()).reindex(idx).fillna(0.0).iloc[0]
+    edge.iloc[-1] += (wa.abs() + wb.abs()).reindex(idx).fillna(0.0).iloc[-1]
     return (pr.reindex(idx).fillna(0.0),
             to.reindex(idx).fillna(0.0),
-            short.reindex(idx).fillna(0.0))
+            short.reindex(idx).fillna(0.0),
+            edge)
 
 
 def backtest_pairs(
@@ -108,6 +114,7 @@ def backtest_pairs(
     cost_bps: float = 7.0,
     borrow_bps_annual: float = 0.0,
     selector=select_pairs,
+    charge_boundaries: bool = False,
     **select_kw,
 ):
     """Run the pairs strategy; returns (net_returns, turnover, info).
@@ -122,7 +129,9 @@ def backtest_pairs(
     position on (from its z-score history) is not charged for opening it, and
     a dropped pair is not charged for closing. And with exit=0, a spread
     position is only closed or flipped when the z-score crosses the opposite
-    entry band.
+    entry band. charge_boundaries=True charges both: every pair pays to open
+    at the start of its segment and to close at the end, even when it is
+    selected again, so it is an upper bound on the missing cost.
     """
     logp = np.log(price)
     dates = returns.loc[start:].index
@@ -144,9 +153,9 @@ def backtest_pairs(
             continue
         prs, tos, sns = [], [], []
         for a, b, beta, _ in pairs:
-            pr, to, sn = _pair_stream(logp, returns, a, b, beta, seg, entry, exit, zwin)
+            pr, to, sn, edge = _pair_stream(logp, returns, a, b, beta, seg, entry, exit, zwin)
             prs.append(pr)
-            tos.append(to)
+            tos.append(to + edge if charge_boundaries else to)
             sns.append(sn)
         pnl.loc[seg] = pd.concat(prs, axis=1).mean(axis=1)        # equal-weight pairs
         turn.loc[seg] = pd.concat(tos, axis=1).mean(axis=1)

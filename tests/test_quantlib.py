@@ -163,6 +163,61 @@ def test_capacity_sharpe_non_increasing():
     assert all(sh[i] >= sh[i + 1] - 1e-9 for i in range(len(sh) - 1)), sh
 
 
+def test_limit_fills_match_run_when_every_order_fills():
+    """With a range wide enough to fill every order, the fill model is run()."""
+    p = _toy_panels()
+    rets, price = p["returns"], p["price"]
+    universe = pd.DataFrame(True, index=rets.index, columns=rets.columns)
+    w = signals.signal_to_weights(-rets.rolling(5).mean(), universe)
+    res, held = backtest.run_limit_fills(w, rets, price, price * 10, price * 0, cost_bps=0)
+    ref = backtest.run(w, rets, cost_bps=0)
+    both = pd.concat([res.gross_returns, ref.gross_returns], axis=1).dropna()
+    assert len(both) > 300 and np.allclose(both.iloc[:, 0], both.iloc[:, 1])
+    assert np.allclose(held.iloc[1:], w.shift(1).fillna(0.0).iloc[1:])
+
+
+def test_limit_fills_miss_buys_when_the_price_runs_away():
+    """A buy at the close does not fill on a day that never trades below it."""
+    idx = pd.date_range("2024-01-01", periods=4)
+    close = pd.DataFrame({"A": [100.0, 110.0, 121.0, 121.0]}, index=idx)
+    rets = close.pct_change()
+    high, low = close * 1.01, close.shift(1) * 1.001      # every day stays above the prior close
+    low.iloc[3] = 120.0                                    # day 4 dips below it
+    w = pd.DataFrame({"A": [1.0, 1.0, 1.0, 1.0]}, index=idx)
+    res, held = backtest.run_limit_fills(w, rets, close, high, low, cost_bps=0)
+    assert held["A"].tolist() == [0.0, 0.0, 0.0, 1.0]     # the buy fills on day 4 only
+    assert res.gross_returns.sum() == 0.0                  # so the 10% up days are missed
+
+
+def test_impact_grows_with_size_and_with_small_volume():
+    p = _toy_panels()
+    rets = p["returns"]
+    universe = pd.DataFrame(True, index=rets.index, columns=rets.columns)
+    w = signals.signal_to_weights(-rets.rolling(5).mean(), universe)
+    small = robustness.impact_drag(w, rets, p["dollar_volume"], aum=1e6).sum()
+    big = robustness.impact_drag(w, rets, p["dollar_volume"], aum=1e8).sum()
+    thin = robustness.impact_drag(w, rets, p["dollar_volume"] / 100, aum=1e6).sum()
+    assert 0 < small < big and np.isclose(big / small, 10.0)   # square root: 100x size, 10x cost
+    assert np.isclose(thin / small, 10.0)
+    net = backtest.run(w, rets, cost_bps=7).net_returns
+    cap = robustness.capacity_by_coin(net, w, rets, p["dollar_volume"], [1e5, 1e7, 1e9])
+    assert cap["sharpe"].is_monotonic_decreasing
+
+
+def test_pairs_edge_charges_open_and_close():
+    from quantlib import pairs
+    idx = pd.date_range("2024-01-01", periods=80)
+    rng = np.random.default_rng(0)
+    b = pd.Series(np.cumsum(rng.normal(0, 0.01, 80)), index=idx)
+    a = b + np.where(np.arange(80) >= 40, 0.2, 0.0)        # the spread jumps on day 41
+    logp = pd.DataFrame({"a": a, "b": b})
+    rets = np.exp(logp).pct_change()
+    seg = idx[45:60]                                       # a short position is on by then
+    _, to, _, edge = pairs._pair_stream(logp, rets, "a", "b", 1.0, seg, 2.0, 0.0, 30)
+    assert edge.iloc[0] > 0.99 and edge.iloc[-1] > 0.99    # gross ~1 per open pair, each way
+    assert edge.iloc[1:-1].eq(0).all() and to.sum() < 1e-9
+
+
 def test_universe_pointwise_no_lookahead():
     """Universe on date t must not use volume from date t (uses shift(1))."""
     p = _toy_panels()
