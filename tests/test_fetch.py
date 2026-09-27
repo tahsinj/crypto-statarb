@@ -178,7 +178,151 @@ def test_utc_epoch_windows():
         assert start_ms == 1577836800000, f"start not UTC-pinned in {url}"
 
 
+def _zip_csv(path, lines):
+    import zipfile
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr(Path(path).name.replace(".zip", ".csv"), "\n".join(lines) + "\n")
+    return Path(path)
+
+
+def _archive_row(open_ms, close_px, unit=1):
+    # archive kline rows: same 12 fields as the API, open time in ms or us
+    return (f"{open_ms * unit},1,2,0.5,{close_px},10,{(open_ms + DAY_MS - 1) * unit},"
+            f"1000000,100,5,400000,0")
+
+
+def test_read_archive_klines_both_layouts():
+    """Old files: no header, ms. Spot files from 2025: microseconds. Perp files: a header."""
+    d0 = 18_000 * DAY_MS                      # 2019-04-14
+    with tempfile.TemporaryDirectory() as td:
+        a = _zip_csv(Path(td) / "a.zip", [_archive_row(d0, 10), _archive_row(d0 + DAY_MS, 11)])
+        b = _zip_csv(Path(td) / "b.zip", [_archive_row(d0 + 2 * DAY_MS, 12, unit=1000)])
+        c = _zip_csv(Path(td) / "c.zip", [",".join(fetch._KLINE_COLUMNS),
+                                            _archive_row(d0 + 3 * DAY_MS, 13)])
+        bars = fetch.read_archive_klines([a, b, c])
+    assert list(bars.index) == list(pd.date_range("2019-04-14", periods=4))
+    assert bars["close"].tolist() == [10.0, 11.0, 12.0, 13.0]
+    assert bars["taker_quote"].eq(4e5).all() and bars["quote_volume"].eq(1e6).all()
+
+
+def test_read_archive_funding_daily_sum():
+    d0 = 18_000 * DAY_MS
+    rows = ["calc_time,funding_interval_hours,last_funding_rate",
+            f"{d0},8,0.0001", f"{d0 + 8 * HOUR_MS},8,0.0002", f"{d0 + 16 * HOUR_MS},8,0.0003",
+            f"{d0 + DAY_MS},8,-0.0001"]
+    with tempfile.TemporaryDirectory() as td:
+        f = fetch.read_archive_funding([_zip_csv(Path(td) / "f.zip", rows)])
+    assert np.isclose(f.iloc[0], 0.0006) and np.isclose(f.iloc[1], -0.0001)
+
+
+def test_archive_keys_daily_files_only_for_live_pairs():
+    months = {pd.Period(m, "M"): f"x/BTCUSDT-1d-{m}.zip" for m in ["2026-06", "2026-07", "2026-08"]}
+    latest = pd.Period("2026-08", "M")
+    keys = fetch.archive_keys("spot", months, "BTCUSDT", pd.Timestamp("2026-07-01"),
+                              pd.Timestamp("2026-09-03"), latest)
+    assert keys[:2] == ["x/BTCUSDT-1d-2026-07.zip", "x/BTCUSDT-1d-2026-08.zip"]
+    assert keys[2:] == [f"data/spot/daily/klines/BTCUSDT/1d/BTCUSDT-1d-2026-09-0{d}.zip" for d in (1, 2, 3)]
+    dead = {pd.Period("2022-05", "M"): "x/LUNAUSDT-1d-2022-05.zip"}
+    assert fetch.archive_keys("spot", dead, "LUNAUSDT", pd.Timestamp("2022-01-01"),
+                              pd.Timestamp("2026-09-03"), latest) == ["x/LUNAUSDT-1d-2022-05.zip"]
+
+
+def test_archive_list_follows_pages():
+    pages = [
+        b"<ListBucketResult><Prefix>data/spot/</Prefix><IsTruncated>true</IsTruncated>"
+        b"<NextMarker>data/spot/B/</NextMarker><CommonPrefixes><Prefix>data/spot/A/</Prefix>"
+        b"</CommonPrefixes><CommonPrefixes><Prefix>data/spot/B/</Prefix></CommonPrefixes></ListBucketResult>",
+        b"<ListBucketResult><Prefix>data/spot/</Prefix><IsTruncated>false</IsTruncated>"
+        b"<CommonPrefixes><Prefix>data/spot/C/</Prefix></CommonPrefixes></ListBucketResult>",
+    ]
+    urls = []
+
+    def fake(url, **kw):
+        urls.append(url)
+        return pages[len(urls) - 1]
+
+    orig = fetch._get_bytes
+    fetch._get_bytes = fake
+    try:
+        folders, files = fetch.archive_list("data/spot/")
+    finally:
+        fetch._get_bytes = orig
+    assert folders == ["data/spot/A/", "data/spot/B/", "data/spot/C/"] and files == []
+    assert "marker=data/spot/B/" in urls[1]
+
+
+def test_archive_download_quotes_non_ascii_names():
+    """Binance lists pairs with Chinese names; their paths must be percent-encoded."""
+    urls = []
+
+    def fake(url, **kw):
+        urls.append(url)
+        return None                                   # as if the file were missing
+
+    orig = fetch._get_bytes
+    fetch._get_bytes = fake
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            got = fetch.archive_download(["data/spot/monthly/klines/币安人生USDT/1d/x.zip"], td, workers=1)
+    finally:
+        fetch._get_bytes = orig
+    assert got == [] and urls[0].isascii() and "%E5%B8%81" in urls[0]
+
+
+def test_archive_panels_join_contracts_without_a_fake_return():
+    idx = pd.date_range("2022-05-01", periods=6)
+    def frame(values):
+        cols = pd.MultiIndex.from_product([list(values), ["price", "volume", "taker", "open", "high", "low"]])
+        df = pd.DataFrame(index=idx, columns=cols, dtype=float)
+        for coin, px in values.items():
+            for f in ["price", "open", "high", "low"]:
+                df[(coin, f)] = px
+            df[(coin, "volume")], df[(coin, "taker")] = 1e6, 5e5
+        return df
+    spot = frame({"LUNA": [80.0, 60.0, 0.1, np.nan, 9.0, 8.0]})
+    perp = frame({"LUNA": [80.0, 60.0, 0.1, np.nan, np.nan, np.nan],
+                  "LUNA2": [np.nan, np.nan, np.nan, np.nan, 9.0, 7.2]})
+    funding = pd.DataFrame({"LUNA": [0.0, -0.01, -0.02, np.nan, np.nan, np.nan],
+                            "LUNA2": [np.nan] * 4 + [0.001, 0.001]}, index=idx)
+    p = data.archive_panels(spot, perp, funding, {"LUNA": "LUNA", "LUNA2": "LUNA"})
+    r = p["perp_returns"]["LUNA"]
+    assert np.isnan(r.iloc[4]) and np.isclose(r.iloc[5], -0.2)   # no return across the switch
+    assert np.isclose(r.iloc[1], -0.25) and p["funding"]["LUNA"].notna().sum() == 5
+    assert np.isnan(p["returns"]["LUNA"].iloc[4])                # the spot gap is not bridged either
+
+
+def test_perp_data_dropped_when_it_stops_tracking_spot():
+    idx = pd.date_range("2024-03-25", periods=6)
+    cols = pd.MultiIndex.from_product([["STRAX", "SHIB"], ["price", "volume", "taker", "open", "high", "low"]])
+    spot = pd.DataFrame(1.0, index=idx, columns=cols)
+    spot[("SHIB", "price")] = 2e-5
+    perp_cols = pd.MultiIndex.from_product([["STRAX", "1000SHIB"], ["price", "volume", "taker", "open", "high", "low"]])
+    perp = pd.DataFrame(1.0, index=idx, columns=perp_cols)
+    perp[("STRAX", "price")] = [1.0, 1.02, 0.98, 9.0, 9.1, 9.2]   # a migration: 9x the spot price
+    perp[("1000SHIB", "price")] = 2e-2                            # 1000 coins per contract
+    perp.loc[idx[-1], ("1000SHIB", "volume")] = 0.0               # a delisted perp's frozen bar
+    funding = pd.DataFrame(1e-4, index=idx, columns=["STRAX", "1000SHIB"])
+    p = data.archive_panels(spot, perp, funding, {"STRAX": "STRAX", "1000SHIB": "SHIB"})
+    assert p["funding"]["STRAX"].notna().tolist() == [True, True, True, False, False, False]
+    assert p["perp_returns"]["STRAX"].iloc[3:].isna().all()
+    assert p["funding"]["SHIB"].notna().tolist() == [True] * 5 + [False]
+    assert data.contract_size("1000SHIB", "SHIB") == 1000 and data.contract_size("1MBABYDOGE", "BABYDOGE") == 1e6
+    assert data.contract_size("1000SATS", "1000SATS") == 1 and data.contract_size("LUNA2", "LUNA") == 1
+
+
+def test_leveraged_tokens_and_perp_names():
+    bases = {"BTC", "ETH", "JUP", "SYRUP", "BTCUP", "ETHDOWN", "BULL", "SHIB", "SATS", "1000SATS"}
+    flagged = {b for b in bases if data.is_leveraged_token(b, bases)}
+    assert flagged == {"BTCUP", "ETHDOWN", "BULL"}
+    m = data.perp_to_spot(["BTC", "1000SHIB", "1000SATS", "1MBABYDOGE", "BTCDOM"], sorted(bases) + ["BABYDOGE"])
+    assert m == {"BTC": "BTC", "1000SHIB": "SHIB", "1000SATS": "1000SATS", "1MBABYDOGE": "BABYDOGE"}
+
+
 if __name__ == "__main__":
-    for fn in [test_taker_field_in_raw_and_panels, test_panels_without_taker_field, test_hourly_pagination_step, test_fetch_binance_interval_kwarg, test_fetch_funding_daily_agg, test_refresh_cache_and_fallback, test_load_raw_single_file, test_utc_epoch_windows]:
+    for fn in [test_taker_field_in_raw_and_panels, test_panels_without_taker_field, test_hourly_pagination_step, test_fetch_binance_interval_kwarg, test_fetch_funding_daily_agg, test_refresh_cache_and_fallback, test_load_raw_single_file, test_utc_epoch_windows,
+               test_read_archive_klines_both_layouts, test_read_archive_funding_daily_sum,
+               test_archive_keys_daily_files_only_for_live_pairs, test_archive_list_follows_pages,
+               test_archive_download_quotes_non_ascii_names, test_archive_panels_join_contracts_without_a_fake_return,
+               test_perp_data_dropped_when_it_stops_tracking_spot, test_leveraged_tokens_and_perp_names]:
         fn()
         print(f"ok {fn.__name__}")

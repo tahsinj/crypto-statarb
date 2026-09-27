@@ -6,6 +6,9 @@ Kraken or Binance). This module uses Binance's public REST endpoints:
 - ``fetch_binance``: spot klines, daily or hourly. Keeps the close, the USD
   quote volume and the taker-buy quote volume. Standard library only.
 - ``fetch_funding``: USDT-margined perpetual funding rates, summed per UTC day.
+- ``fetch_archive``: the same daily data from Binance's public data archive,
+  which also holds pairs that have since been delisted. Notebook 09 uses it to
+  rebuild the universe without survivorship.
 - ``fetch_yahoo``: a yfinance fallback for daily bars. No taker volume, patchier
   volume data and heavy rate limiting, so it is not used for the research.
 
@@ -19,17 +22,21 @@ Notebook 00 calls them through ``refresh``, which caches the result under
 """
 from __future__ import annotations
 
+import io
 import json
+import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from .data import STABLECOINS
+from .data import STABLECOINS, WRAPPED
 
 BINANCE_BASE = "https://api.binance.com"
 FAPI_BASE = "https://fapi.binance.com"
@@ -37,7 +44,7 @@ _INTERVAL_MS = {"1d": 86_400_000, "1h": 3_600_000}
 # Leveraged tokens and wrapped/pegged assets are not real spot exposures and
 # would pollute a momentum/reversal universe; drop them alongside stablecoins.
 _LEVERAGED_SUFFIXES = ("UP", "DOWN", "BULL", "BEAR")
-_WRAPPED = {"WBTC", "WETH", "WBETH", "BETH", "STETH", "WEETH"}
+_WRAPPED = WRAPPED
 
 
 def _get_json(url: str, retries: int = 4, pause: float = 0.5):
@@ -94,7 +101,7 @@ def _klines(pair: str, start_ms: int, end_ms: int, interval: str = "1d") -> pd.D
     cursor = start_ms
     while cursor < end_ms:
         url = (
-            f"{BINANCE_BASE}/api/v3/klines?symbol={pair}&interval={interval}"
+            f"{BINANCE_BASE}/api/v3/klines?symbol={urllib.parse.quote(pair)}&interval={interval}"
             f"&startTime={cursor}&endTime={end_ms}&limit=1000"
         )
         batch = _get_json(url)
@@ -188,7 +195,7 @@ def fetch_funding(
         try:
             while cursor < end_ms:
                 url = (
-                    f"{FAPI_BASE}/fapi/v1/fundingRate?symbol={pair}"
+                    f"{FAPI_BASE}/fapi/v1/fundingRate?symbol={urllib.parse.quote(pair)}"
                     f"&startTime={cursor}&endTime={end_ms}&limit=1000"
                 )
                 batch = _get_json(url)
@@ -215,6 +222,232 @@ def fetch_funding(
     df = pd.DataFrame(out).sort_index()
     df.index.name = "Date"
     return df
+
+
+# ---------------------------------------------------------------------------
+# Binance's public data archive (data.binance.vision)
+# ---------------------------------------------------------------------------
+# The REST API only serves pairs that still trade, so a coin list taken from it
+# leaves out everything delisted before the fetch. The archive keeps monthly
+# files for delisted pairs as well, with the same kline columns as the API
+# (taker volume included) and the full funding history of every perp.
+
+ARCHIVE_URL = "https://data.binance.vision/"
+ARCHIVE_LIST_URL = "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision"
+ARCHIVE_ROOTS = {
+    "spot": "data/spot/{freq}/klines/",
+    "um": "data/futures/um/{freq}/klines/",
+    "funding": "data/futures/um/{freq}/fundingRate/",
+}
+_KLINE_COLUMNS = ["open_time", "open", "high", "low", "close", "volume", "close_time",
+                  "quote_volume", "n_trades", "taker_base", "taker_quote", "ignore"]
+
+
+def _get_bytes(url: str, retries: int = 5, pause: float = 0.5, missing_ok: bool = False) -> bytes | None:
+    """GET raw bytes with backoff. With missing_ok, a missing file returns None."""
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    for attempt in range(retries):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                return resp.read()
+        except urllib.error.HTTPError as e:
+            if e.code in (403, 404) and missing_ok:
+                return None
+            if e.code in (418, 429) or e.code >= 500:
+                time.sleep(pause * (2**attempt))
+                continue
+            raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            time.sleep(pause * (2**attempt))
+    raise RuntimeError(f"failed to fetch {url} after {retries} attempts")
+
+
+def archive_list(prefix: str) -> tuple[list[str], list[str]]:
+    """Sub-folders and files directly under ``prefix`` in the archive."""
+    folders, files, marker = [], [], ""
+    while True:
+        url = f"{ARCHIVE_LIST_URL}?delimiter=/&prefix={urllib.parse.quote(prefix)}"
+        if marker:
+            url += f"&marker={urllib.parse.quote(marker)}"
+        xml = _get_bytes(url).decode()
+        folders += [p for p in re.findall(r"<Prefix>([^<]+)</Prefix>", xml) if p != prefix]
+        files += re.findall(r"<Key>([^<]+)</Key>", xml)
+        if "<IsTruncated>true</IsTruncated>" not in xml:
+            return folders, files
+        nxt = re.search(r"<NextMarker>([^<]+)</NextMarker>", xml)
+        marker = nxt.group(1) if nxt else files[-1]
+
+
+def archive_pairs(market: str = "spot", quote: str = "USDT") -> list[str]:
+    """Every ``*USDT`` pair with monthly files in the archive, delisted ones included.
+
+    ``market`` is 'spot', 'um' (USDT-margined perps) or 'funding'.
+    """
+    root = ARCHIVE_ROOTS[market].format(freq="monthly")
+    folders, _ = archive_list(root)
+    pairs = [f[len(root):].strip("/") for f in folders]
+    return sorted(p for p in pairs if p.endswith(quote) and len(p) > len(quote))
+
+
+def archive_months(market: str, pair: str) -> dict[pd.Period, str]:
+    """The monthly files the archive has for one pair, by month."""
+    root = ARCHIVE_ROOTS[market].format(freq="monthly") + pair + "/"
+    if market != "funding":
+        root += "1d/"
+    _, files = archive_list(root)
+    out = {}
+    for f in files:
+        m = re.search(r"-(\d{4}-\d{2})\.zip$", f)
+        if m:
+            out[pd.Period(m.group(1), "M")] = f
+    return out
+
+
+def archive_keys(
+    market: str,
+    monthly: dict[pd.Period, str],
+    pair: str,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    latest_month: pd.Period,
+) -> list[str]:
+    """Files covering [start, end] for one pair.
+
+    Monthly files where they exist. A pair still trading in ``latest_month``
+    (the newest month with monthly files) also gets daily files for the days
+    after it, since the archive only writes a monthly file once the month is
+    over. Funding has no daily files.
+    """
+    first, last = pd.Period(start, "M"), pd.Period(end, "M")
+    keys = [k for p, k in sorted(monthly.items()) if first <= p <= last]
+    if market == "funding" or not monthly or max(monthly) != latest_month or last <= latest_month:
+        return keys
+    daily_root = ARCHIVE_ROOTS[market].format(freq="daily") + f"{pair}/1d/"
+    day0 = max(latest_month.end_time.normalize() + pd.Timedelta(days=1), start)
+    return keys + [f"{daily_root}{pair}-1d-{d:%Y-%m-%d}.zip" for d in pd.date_range(day0, end)]
+
+
+def archive_download(keys: list[str], dest: str | Path, workers: int = 16) -> list[Path]:
+    """Download archive files not yet under ``dest``; return the local paths that exist.
+
+    Files keep the archive's own paths below ``dest``. Missing files (a daily
+    file not written yet, say) are skipped.
+    """
+    dest = Path(dest)
+
+    def one(key: str) -> None:
+        path = dest / key
+        if path.exists():
+            return
+        blob = _get_bytes(ARCHIVE_URL + urllib.parse.quote(key), missing_ok=True)
+        if blob is None:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        part = path.with_name(path.name + ".part")
+        part.write_bytes(blob)
+        part.replace(path)
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        list(ex.map(one, keys))
+    return [dest / k for k in keys if (dest / k).exists()]
+
+
+def _read_zip_csv(path: Path) -> bytes:
+    with zipfile.ZipFile(path) as z:
+        return z.read(z.namelist()[0])
+
+
+def read_archive_klines(paths: list[Path]) -> pd.DataFrame:
+    """Daily bars from archive kline files, indexed by the bar's open date.
+
+    Handles both layouts the archive uses: files with or without a header row,
+    and open times in milliseconds or (spot files from 2025 on) microseconds.
+    """
+    frames = []
+    for p in paths:
+        blob = _read_zip_csv(p)
+        if not blob.strip():
+            continue
+        has_header = not blob[:1].isdigit()
+        df = pd.read_csv(io.BytesIO(blob), header=0 if has_header else None).iloc[:, :12]
+        df.columns = _KLINE_COLUMNS
+        frames.append(df)
+    cols = ["open", "high", "low", "close", "quote_volume", "taker_quote"]
+    if not frames:
+        return pd.DataFrame(columns=cols, dtype=float)
+    df = pd.concat(frames, ignore_index=True)
+    t = df["open_time"].astype("int64").to_numpy()
+    t = np.where(t > 10**14, t // 1000, t)
+    df.index = pd.DatetimeIndex(pd.to_datetime(t, unit="ms"), name="Date")
+    out = df[cols].astype(float)
+    return out[~out.index.duplicated(keep="last")].sort_index()
+
+
+def read_archive_funding(paths: list[Path]) -> pd.Series:
+    """Funding payments from archive files, summed per UTC day (like fetch_funding)."""
+    frames = [pd.read_csv(io.BytesIO(_read_zip_csv(p))) for p in paths]
+    frames = [f for f in frames if len(f)]
+    if not frames:
+        return pd.Series(dtype=float)
+    df = pd.concat(frames, ignore_index=True)
+    s = pd.Series(df["last_funding_rate"].astype(float).to_numpy(),
+                  index=pd.to_datetime(df["calc_time"].astype("int64"), unit="ms"))
+    s = s[~s.index.duplicated(keep="last")].sort_index()
+    return s.resample("1D").sum(min_count=1)
+
+
+def fetch_archive(
+    market: str,
+    pairs: list[str],
+    start: str,
+    end: str,
+    dest: str | Path,
+    quote: str = "USDT",
+    workers: int = 16,
+) -> pd.DataFrame:
+    """Daily data for ``pairs`` from the archive, cached under ``dest``.
+
+    For 'spot' and 'um' the result is a (symbol, field) frame like
+    fetch_binance's, with the bar's open, high and low added to price, volume
+    and taker. For 'funding' it is a dates x symbols frame of daily sums.
+    Symbols keep the archive's base names, so the perp '1000SHIBUSDT' becomes
+    '1000SHIB'. A rerun only downloads files that are new.
+    """
+    start_ts, end_ts = pd.Timestamp(start), pd.Timestamp(end)
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        monthly = dict(zip(pairs, ex.map(lambda p: archive_months(market, p), pairs)))
+    months = [max(m) for m in monthly.values() if m]
+    if not months:
+        raise RuntimeError(f"archive has no {market} files for these pairs")
+    latest = max(months)
+    keys = {p: archive_keys(market, monthly[p], p, start_ts, end_ts, latest) for p in pairs}
+    archive_download([k for ks in keys.values() for k in ks], dest, workers=workers)
+
+    dest = Path(dest)
+    out = {}
+    for pair, ks in keys.items():
+        paths = [dest / k for k in ks if (dest / k).exists()]
+        if not paths:
+            continue
+        base = _base_symbol(pair, quote)
+        if market == "funding":
+            s = read_archive_funding(paths).loc[start_ts:end_ts]
+            if s.notna().any():
+                out[base] = s
+            continue
+        bars = read_archive_klines(paths).loc[start_ts:end_ts]
+        if bars.empty:
+            continue
+        for field, col in [("price", "close"), ("volume", "quote_volume"), ("taker", "taker_quote"),
+                           ("open", "open"), ("high", "high"), ("low", "low")]:
+            out[(base, field)] = bars[col]
+    if not out:
+        raise RuntimeError(f"archive returned no {market} data")
+    df = pd.DataFrame(out).sort_index()
+    df.index.name = "Date"
+    if market != "funding":
+        df.columns = pd.MultiIndex.from_tuples(df.columns)
+    return df.sort_index(axis=1)
 
 
 def fetch_yahoo(
