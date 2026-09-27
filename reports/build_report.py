@@ -1,7 +1,7 @@
 """Build the PDF research report, ``reports/REPORT.pdf``.
 
 Every number in the report is computed here from the artifacts in
-data/processed/ (written by notebooks 00-08), from the twsq CSVs in alphas/,
+data/processed/ (written by notebooks 00-11), from the twsq CSVs in alphas/,
 or, for the fast-reversal grid, read from notebook 05's executed output. The
 script checks the headline numbers against the values the notebooks printed
 and stops without writing the PDF if anything disagrees. Run it after the
@@ -47,6 +47,9 @@ WINDOWS = {
 # Notebook 08: the frozen book on data fetched after the research ended.
 FORWARD_START, FORWARD_END = "2026-07-07", "2026-09-26"
 FORWARD = slice(FORWARD_START, FORWARD_END)
+RWIN = {"Dev": slice(DEV_START, DEV_END), "Gate": slice(GATE_START, GATE_END),
+        "Lockbox": slice(LOCKBOX_START, LOCKBOX_END), "Forward": FORWARD}
+ALL = PROC / "all_pairs"
 N_TRIALS = 48          # research trials in the registry (rows 1-48); rows 49-50 are the two books
 BOOT = dict(n_boot=2000, method="block", seed=42)   # same settings as notebooks 06 and 07
 
@@ -86,7 +89,7 @@ def load_inputs() -> dict:
             "returns", "universe", "taker_imbalance", "funding", "price_1h", "forward_book"]
     missing = [n for n in need if not (PROC / f"{n}.parquet").exists()]
     if missing:
-        raise FileNotFoundError(f"Missing {missing} in {PROC}. Run notebooks 00-08 first.")
+        raise FileNotFoundError(f"Missing {missing} in {PROC}. Run notebooks 00-11 first.")
     d = {n: pd.read_parquet(PROC / f"{n}.parquet") for n in need}
     d["registry"] = pd.read_csv(PROC / "trial_registry.csv")
     d["cost_stress"] = pd.read_csv(PROC / "posthoc_cost_stress.csv")
@@ -94,6 +97,14 @@ def load_inputs() -> dict:
     d["fwd_split"] = pd.read_csv(PROC / "forward_attribution.csv").set_index(["part", "item"]).iloc[:, 0]
     d["fwd_conc"] = pd.read_csv(PROC / "forward_concentration.csv").set_index("window")
     d["fwd_coin"] = pd.read_csv(PROC / "forward_top_coin.csv", parse_dates=["date"]).set_index("date")
+    # notebooks 09 to 11: the every-pair universe, the realism checks and v2
+    for name in ["realism_steps", "realism_size", "realism_pairs", "v2_dev_gate"]:
+        d[name] = pd.read_parquet(PROC / f"{name}.parquet")
+    d["realism_capacity"] = pd.read_csv(PROC / "realism_capacity.csv").set_index(["sleeve", "aum"])
+    for name, key in [("realism_oos", "book"), ("realism_fills", "sleeve"), ("realism_beta", "series")]:
+        d[name] = pd.read_csv(PROC / f"{name}.csv").set_index(key)
+    d["all_universe"] = pd.read_parquet(ALL / "universe.parquet")
+    d["all_bench"] = pd.read_parquet(ALL / "benchmarks.parquet")
     return d
 
 
@@ -184,8 +195,10 @@ def compute(d: dict) -> dict:
         failures.append("  sleeves_full does not reproduce the equal-weight book")
 
     reg = d["registry"]
-    if len(reg) != N_TRIALS + 2 or (reg["family"] != "portfolio").sum() != N_TRIALS:
-        failures.append(f"  registry has {len(reg)} rows; expected {N_TRIALS} trials + 2 books")
+    fam = reg["family"]
+    if not ((~fam.isin(["portfolio", "v2"])).sum() == N_TRIALS and (fam == "portfolio").sum() == 2
+            and (fam == "v2").sum() == 3):
+        failures.append(f"  registry has {len(reg)} rows; expected {N_TRIALS} trials, 2 books and 3 v2 rows")
 
     v: dict = {}
     v["book"] = {(b, w): perf(s.loc[sl], bench) for b, s in [("WF", wf), ("EW", ew)]
@@ -324,7 +337,48 @@ def compute(d: dict) -> dict:
                   "nov22": len(whole.loc["2022-11"]), "nov22_coins": set(whole.loc["2022-11"]),
                   "n_jan20": fuv.sum(axis=1).loc["2020-01"].agg(["min", "max"])}
 
-    # Numbers as printed by notebooks 06 to 08, and signs the text relies on.
+    # Realism checks (notebooks 09 and 11). Step 0 has to be the research
+    # series, and the pairs "as run" series the notebook 07 baseline.
+    rs = d["realism_steps"]
+    v["steps"] = {tuple(c.split("|")): {w: metrics.sharpe(rs[c].loc[sl].dropna()) for w, sl in RWIN.items()}
+                  for c in rs.columns}
+    for name, ref in [("walk_forward", wf), ("equal_weight", ew), ("carry", sleeves["carry"])]:
+        if not same_series(rs[f"0 as run|{name}"].loc[:LOCKBOX_END], ref.loc[:LOCKBOX_END]):
+            failures.append(f"  realism step 0 {name} is not the research series")
+    sz = d["realism_size"]
+    v["size"] = {tuple(c.split("|")): {w: metrics.sharpe(sz[c].loc[sl].dropna()) for w, sl in RWIN.items()}
+                 for c in sz.columns}
+    rp = d["realism_pairs"]
+    if not same_series(rp["as run"], bases["reversal"]):
+        failures.append("  realism_pairs 'as run' differs from baselines_full")
+    v["pairs_c"] = {c: {w: metrics.sharpe(rp[c].loc[RWIN[w]].dropna()) for w in ["Dev", "Gate", "Lockbox"]}
+                    for c in rp.columns}
+    oos = {k: rs[f"0 as run|{k}"].loc[LOCKBOX_START:FORWARD_END].dropna() for k in ["walk_forward", "equal_weight"]}
+    v["oos"] = {"n": len(oos["walk_forward"]), "sharpe": metrics.sharpe(oos["walk_forward"]),
+                "ci": metrics.bootstrap_sharpe_ci(oos["walk_forward"], **BOOT),
+                "sharpe_ew": metrics.sharpe(oos["equal_weight"])}
+    v["oos"]["t"] = v["oos"]["sharpe"] * np.sqrt(v["oos"]["n"] / 365)
+    ua = d["all_universe"].loc[DEV_START:LOCKBOX_END]
+    outside = ~ua.columns.isin(d["price"].columns)
+    v["surv"] = ua.loc[:, outside].to_numpy().sum() / ua.to_numpy().sum()
+    share = ua.loc[:, outside].sum(axis=1) / ua.sum(axis=1)
+    v["surv_year"] = share.groupby(share.index.year).mean()
+    v["fills"], v["cap"], v["fwd_beta"] = d["realism_fills"], d["realism_capacity"], d["realism_beta"]
+
+    # v2 (notebook 10), on dev and gate only, against the every-pair benchmarks.
+    v2d = d["v2_dev_gate"]
+    v["v2"] = {(n, w): perf(v2d[c].loc[RWIN[w]], d["all_bench"])
+               for n, c in [("Book", "v2"), ("Orderflow", "orderflow"), ("Carry", "carry")] for w in ["Dev", "Gate"]}
+    for key, c in [('"sleeve": "orderflow"', "orderflow"), ('"sleeve": "carry"', "carry"),
+                   ('"rule": "equal_weight"', "v2")]:
+        row = reg[(reg["family"] == "v2") & reg["config"].str.contains(key, regex=False)].iloc[0]
+        if not (abs(row["dev_sharpe"] - metrics.sharpe(v2d[c].loc[RWIN["Dev"]].dropna())) < 1e-9
+                and abs(row["gate_sharpe"] - metrics.sharpe(v2d[c].loc[RWIN["Gate"]].dropna())) < 1e-9):
+            failures.append(f"  v2 registry row for {c} does not match v2_dev_gate.parquet")
+    if v2d.index.max() > pd.Timestamp(GATE_END):
+        failures.append("  v2_dev_gate.parquet goes past the gate")
+
+    # Numbers as printed by notebooks 06 to 11, and signs the text relies on.
     lk_wf, lk_ew = v["book"][("WF", "Lockbox")], v["book"][("EW", "Lockbox")]
     fl, F = v["full"], v["fwd"]
     for label, got, exp, tol in [
@@ -388,6 +442,42 @@ def compute(d: dict) -> dict:
         ("forward carry, other coins", fsplit[("carry", "all other coins")], -0.0282, 0.0005),
         ("forward carry, median largest weight", conc.loc["forward", "median largest weight"], 0.2693, 0.0005),
         ("forward DEXE crash day", v["fwd_coin"]["crash"], -0.8252, 0.0005),
+        ("step 0b WF lockbox", v["steps"][("0b archive data", "walk_forward")]["Lockbox"], 1.4544, 0.0005),
+        ("step 1 WF lockbox", v["steps"][("1 non-crypto out", "walk_forward")]["Lockbox"], 1.2625, 0.0005),
+        ("step 2 WF lockbox", v["steps"][("2 every pair", "walk_forward")]["Lockbox"], 0.3615, 0.0005),
+        ("step 2 EW lockbox", v["steps"][("2 every pair", "equal_weight")]["Lockbox"], -0.6166, 0.0005),
+        ("step 2 EW gate", v["steps"][("2 every pair", "equal_weight")]["Gate"], -1.4563, 0.0005),
+        ("step 2 orderflow gate", v["steps"][("2 every pair", "orderflow")]["Gate"], -0.7837, 0.0005),
+        ("step 2 orderflow lockbox", v["steps"][("2 every pair", "orderflow")]["Lockbox"], -0.3999, 0.0005),
+        ("step 2 carry gate", v["steps"][("2 every pair", "carry")]["Gate"], -1.8386, 0.0005),
+        ("step 3 orderflow dev", v["steps"][("3 carry on perps", "orderflow")]["Dev"], 0.4449, 0.0005),
+        ("step 4 orderflow dev", v["steps"][("4 limit fills", "orderflow")]["Dev"], 0.0877, 0.0005),
+        ("size, research list 51-100, gate", v["size"][("research list", "ranks 51-100")]["Gate"], 1.5767, 0.0005),
+        ("size, research list 51-100, lockbox", v["size"][("research list", "ranks 51-100")]["Lockbox"], 1.6634, 0.0005),
+        ("size, every pair 51-100, gate", v["size"][("every pair", "ranks 51-100")]["Gate"], -2.1442, 0.0005),
+        ("size, every pair 51-100, lockbox", v["size"][("every pair", "ranks 51-100")]["Lockbox"], -1.0093, 0.0005),
+        ("capacity, orderflow, no impact", v["cap"].loc[("orderflow", "no impact"), "sharpe y=1"], 0.8678, 0.0005),
+        ("capacity, orderflow, $1M, y=0.5", v["cap"].loc[("orderflow", "$1M"), "sharpe y=0.5"], 0.2960, 0.0005),
+        ("capacity, orderflow, $1M, y=1", v["cap"].loc[("orderflow", "$1M"), "sharpe y=1"], -0.2707, 0.0005),
+        ("pairs charged, dev", v["pairs_c"]["charged"]["Dev"], -0.4331, 0.0005),
+        ("out-of-sample WF Sharpe", v["oos"]["sharpe"], 0.3744, 0.0005),
+        ("out-of-sample days", v["oos"]["n"], 453, 0),
+        ("out-of-sample CI low", v["oos"]["ci"][0], -1.2196, 0.0005),
+        ("out-of-sample CI high", v["oos"]["ci"][1], 1.9532, 0.0005),
+        ("out-of-sample EW Sharpe", v["oos"]["sharpe_ew"], 0.7151, 0.0005),
+        ("survivorship share", v["surv"], 0.4641, 0.00005),
+        ("orderflow filled share", v["fills"].loc["orderflow", "filled share of orders"], 0.9895, 0.00005),
+        ("orderflow missed share", v["fills"].loc["orderflow", "missed share of positions"], 0.0029, 0.00005),
+        ("return where a buy missed", v["fills"].loc["orderflow", "return where a buy missed"], 0.0708, 0.00005),
+        ("return where a sell missed", v["fills"].loc["orderflow", "return where a sell missed"], -0.0572, 0.00005),
+        ("orderflow price P&L, all filled", v["fills"].loc["orderflow", "price P&L, every order filled"], 0.6989, 0.00005),
+        ("orderflow price P&L, fill model", v["fills"].loc["orderflow", "price P&L, fill model"], 0.3984, 0.00005),
+        ("forward beta, share of windows lower", v["fwd_beta"].loc["walk_forward", "share of research windows lower"], 0.0695, 0.00005),
+        ("v2 book dev", v["v2"][("Book", "Dev")]["sharpe"], 1.3949, 0.0005),
+        ("v2 book gate", v["v2"][("Book", "Gate")]["sharpe"], 1.1161, 0.0005),
+        ("v2 orderflow gate", v["v2"][("Orderflow", "Gate")]["sharpe"], -0.7837, 0.0005),
+        ("v2 carry dev", v["v2"][("Carry", "Dev")]["sharpe"], 1.7590, 0.0005),
+        ("v2 carry gate", v["v2"][("Carry", "Gate")]["sharpe"], 2.4116, 0.0005),
     ]:
         check(label, got, exp, tol, failures)
     if not (F["Book, walk-forward"]["sharpe"] < 0 < F["Book, equal weight"]["total"]
@@ -401,11 +491,17 @@ def compute(d: dict) -> dict:
             and conc.loc["forward", "days one coin holds a whole side"] == 10
             and wh["jan20"] == 16 and wh["nov22"] == 7 and wh["nov22_coins"] == {"SOL"}):
         failures.append("  section 6 text on Carry's concentration no longer matches the data")
+    st = v["steps"]
+    if not (all(st[("2 every pair", s)][w] < 0 for s in ["orderflow", "carry"] for w in ["Gate", "Lockbox"])
+            and st[("2 every pair", "seasonality")]["Dev"] > 1 and st[("2 every pair", "seasonality")]["Gate"] > 1
+            and st[("2 every pair", "seasonality")]["Lockbox"] < 0
+            and abs(st[("0b archive data", "walk_forward")]["Lockbox"] - lk_wf["sharpe"]) < 0.01):
+        failures.append("  section 7 text no longer matches notebook 11")
     if not (v["untilted_c"]["Dev"] > v["seas_c"]["Dev"] and v["seas_c"]["Gate"] > v["untilted_c"]["Gate"]):
         failures.append("  section 5.1 text assumes the charged overlay loses on dev and wins on the gate")
     if not (abs(tw.loc["SeasonalMomentum", "sharpe"]) < 0.3 and tw.loc["OrderflowFollow", "sharpe"] < 0
             and tw.loc["FundingCarry", "sharpe"] > 0):
-        failures.append("  section 7 text no longer matches the twsq results")
+        failures.append("  section 9 text no longer matches the twsq results")
     if not all(abs(fl[k][b]) < 0.03 for k in ["Book, walk-forward", "Book, equal weight"]
                for b in ["beta", "beta_mkt"]):
         failures.append("  the summary says both books have betas within 0.03 of zero")
@@ -421,7 +517,7 @@ def compute(d: dict) -> dict:
 
 FAMILY_LABEL = {"incumbent_momentum": "baseline", "incumbent_pairs": "baseline",
                 "seasonality": "seasonality", "orderflow": "orderflow", "carry": "carry",
-                "fastrev": "fast reversal", "portfolio": "book"}
+                "fastrev": "fast reversal", "portfolio": "book", "v2": "v2"}
 
 
 def describe(family: str, cfg: dict) -> str:
@@ -455,6 +551,12 @@ def describe(family: str, cfg: dict) -> str:
         if p == "P2":
             return f"P2 reversal {cfg['lookback']}d, |funding z| > {cfg['fz_thresh']:g}"
         return f"P3 funding change, {cfg['smooth']}d, {cfg['dir']}"
+    if family == "v2":
+        if cfg.get("sleeve") == "orderflow":
+            return "Orderflow, every pair"
+        if cfg.get("sleeve") == "carry":
+            return "Carry, rank weights on perps, every pair"
+        return "v2 book, equal weight"
     if family == "fastrev":
         return f"{cfg['lookback_h']}h lookback, rebalance every {cfg['rebal_h']}h"
     if cfg.get("rule") == "walk_forward_mv":
@@ -495,6 +597,7 @@ def full_rows(full: dict) -> list:
 
 
 PERF_WIDTHS = (31, 15, 13, 12, 13, 13, 13, 18)
+SLEEVE_NAMES = ["seasonality", "orderflow", "carry"]
 FULL_WIDTHS = (31, 12, 15, 13, 12, 13, 13, 13, 18)
 
 
@@ -573,6 +676,24 @@ def make_figures(d: dict, tmp: Path) -> dict:
     paths["forward"] = tmp / "forward.png"
     fig.savefig(paths["forward"], dpi=130)
     plt.close(fig)
+
+    rs = d["realism_steps"]
+    fig, axes = plt.subplots(1, 2, figsize=(10, 3.4), sharey=True)
+    for ax, key, title in [(axes[0], "walk_forward", "Walk-forward book"), (axes[1], "equal_weight", "Equal-weight book")]:
+        for step, label, color in [("0 as run", "Research coin list (as run)", "steelblue"),
+                                   ("2 every pair", "Every pair", "crimson")]:
+            s = rs[f"{step}|{key}"].loc[DEV_START:FORWARD_END].dropna()
+            eq = (1.0 + s).cumprod()
+            ax.plot(eq.index, eq.values, color=color, lw=1.1, label=label)
+        for x, ls, c in [(GATE_START, ":", "navy"), (LOCKBOX_START, "--", "red"), (FORWARD_START, "--", "gray")]:
+            ax.axvline(pd.Timestamp(x), color=c, ls=ls, lw=1.0)
+        ax.set_yscale("log")
+        ax.set_title(title)
+        ax.legend(fontsize=8, loc="upper left")
+    fig.tight_layout()
+    paths["survivorship"] = tmp / "survivorship.png"
+    fig.savefig(paths["survivorship"], dpi=130)
+    plt.close(fig)
     return paths
 
 
@@ -650,6 +771,7 @@ class Report(FPDF):
 def build_pdf(d: dict, v: dict, figs: dict) -> int:
     reg = d["registry"]
     book, bookc, sl, base, fl, F = v["book"], v["book_c"], v["sleeve"], v["base"], v["full"], v["fwd"]
+    st, v2s = v["steps"], v["v2"]
     lk_wf, lk_ew = book[("WF", "Lockbox")], book[("EW", "Lockbox")]
     full_wf, full_ew = fl["Book, walk-forward"], fl["Book, equal weight"]
     grid = fastrev_grid()
@@ -695,15 +817,26 @@ def build_pdf(d: dict, v: dict, figs: dict) -> int:
         "once on a lockbox year (July 2025 to July 2026) that no decision had looked at. Every "
         f"configuration tried is logged, {N_TRIALS} in all, and the deflated Sharpe ratio charges "
         "the book for that search.\n\n"
-        f"Over the whole period the equal-weight book returned {pct(full_ew['ret'])} a year at "
+        "On the research data the book held up on the lockbox year: a walk-forward Sharpe of "
+        f"{lk_wf['sharpe']:.2f} with almost no market exposure. Later checks undo most of that. As run, "
+        f"it lost {pct(-F['Book, walk-forward']['total'])} in an {F['Book, walk-forward']['n']}-day "
+        "forward test. More important, the research coin list turned out to hold only survivors: it "
+        f"is the 150 most-traded pairs of July 2026, and {pct(v['surv'], 0)} of the universe's "
+        "coin-days before then belonged to coins it left out. Rebuilt with every Binance pair, "
+        "delisted ones included, the same frozen book has a lockbox Sharpe of "
+        f"{sr(st[('2 every pair', 'walk_forward')]['Lockbox'])} (walk-forward) and "
+        f"{sr(st[('2 every pair', 'equal_weight')]['Lockbox'])} (equal weight). A second version, fixed in "
+        "the repository before it was tested, trades the full universe and is now running on new "
+        "data.\n\n"
+        f"As run on the research coin list, over the whole period the equal-weight book returned {pct(full_ew['ret'])} a year at "
         f"{pct(full_ew['vol'])} volatility (Sharpe {full_ew['sharpe']:.2f}) and the walk-forward "
         f"book {pct(full_wf['ret'])} at {pct(full_wf['vol'])} (Sharpe {full_wf['sharpe']:.2f}, "
         f"from {full_wf['start']:%B %Y}), both with almost no exposure to BTC or the wider market. "
         f"On the lockbox alone the walk-forward book returned {pct(lk_wf['ret'])} a year at "
         f"{pct(lk_wf['vol'])} volatility, a Sharpe of {lk_wf['sharpe']:.2f}, and the equal-weight "
         f"book had a Sharpe of {lk_ew['sharpe']:.2f}. The deflated Sharpe on the lockbox is "
-        f"{v['dsr_lk']:.2f}, well short of the usual 0.95 bar, so the result is positive but not "
-        "statistically proven.\n\n"
+        f"{v['dsr_lk']:.2f}, well short of the usual 0.95 bar, so even before the checks below the "
+        "result was not statistically proven.\n\n"
         "The book holds three sleeves: momentum with weekday exposure halved (Seasonality), a "
         "10-day taker-imbalance follower (Orderflow) and a funding carry trade (Carry). Baseline "
         f"time-series momentum worked well on the development window (Sharpe "
@@ -721,12 +854,21 @@ def build_pdf(d: dict, v: dict, figs: dict) -> int:
         f"{pct(-F['Book, walk-forward']['total'])} while BTC rose {pct(F['BTC']['total'])}. Orderflow, "
         f"its largest sleeve, lost {pct(-F['Orderflow']['total'])}, and Carry's gain came from one coin "
         "that crashed. The window is too short to confirm or overturn the lockbox, but the book lost "
-        "money, and section 6 shows where the loss came from."
+        "money, and section 6 shows where the loss came from.\n\n"
+        "Section 7 makes the backtest more realistic one step at a time. Apart from the coin list, "
+        "the step that matters is fills: limit orders that have to be filled cost Orderflow most of "
+        "its edge, because the few that miss are the ones the price runs away from. Even on the "
+        "research list, Orderflow could not have run much more than $1M. Section 8 describes v2: "
+        "Orderflow plus a Carry sleeve weighted by rank and measured on perp prices, on every pair, "
+        f"with equal weights. On dev and gate it has a Sharpe of {v2s[('Book', 'Dev')]['sharpe']:.2f} "
+        f"and {v2s[('Book', 'Gate')]['sharpe']:.2f}, nearly all from Carry, while its Orderflow sleeve "
+        "fails the gate. Its test is every day from 2026-09-28, which notebook 12 adds month by month."
     )
     pdf.table_block(full_rows(fl), title=f"Results over the whole sample ({DEV_START} to {LOCKBOX_END})",
                     widths=FULL_WIDTHS)
     pdf.caption(
-        "Alpha and the two betas come from a regression of daily returns on BTC and the "
+        "As run on the research coin list; section 7 shows how little of it survives a universe with "
+        "every pair. Alpha and the two betas come from a regression of daily returns on BTC and the "
         "equal-weight market; the t-stat in brackets uses Newey-West errors. These figures mix "
         "the windows the strategies were chosen on with the windows they were tested on, so "
         "section 4 splits them. Section 2 explains why the momentum alphas are mostly market "
@@ -935,7 +1077,8 @@ def build_pdf(d: dict, v: dict, figs: dict) -> int:
         f"sample and {v['dsr_lk']:.2f} on the lockbox, both far below 0.95. One year is also "
         f"short: the bootstrap interval above is {hi - lo:.1f} Sharpe points wide. The book did "
         "make money with almost no market exposure, but this sample cannot separate that from "
-        "luck."
+        "luck. Section 7 reruns the same book on a universe with every pair, where its lockbox "
+        f"Sharpe is {sr(st[('2 every pair', 'walk_forward')]['Lockbox'])}."
     )
 
     # 5. Post-hoc checks
@@ -1079,14 +1222,201 @@ def build_pdf(d: dict, v: dict, figs: dict) -> int:
         "window can neither confirm nor overturn the lockbox. It does show, more plainly than the "
         "research did, that Carry's uncapped weights can put half the sleeve into one coin in the "
         "middle of a crash. A per-coin cap is the obvious fix, but a cap chosen after seeing this "
-        "window would be fitted to it, so the book is reported as it was frozen."
+        "window would be fitted to it, so the book is reported as it was frozen. Section 7.6 adds "
+        "this window to the lockbox for the whole out-of-sample record."
     )
     pdf.figure(figs["forward"])
     pdf.caption("Growth of $1 over the forward window. Left: the two books and BTC. Right: the three "
                 "sleeves; the dotted line marks DEXE's crash on 2026-07-21.")
 
-    # 7. twsq
-    pdf.h1("7. The sleeves in twsq")
+    # 7. Realism checks
+    sz, fills, cap, oos = v["size"], v["fills"], v["cap"], v["oos"]
+    pdf.h1("7. Realism checks: the coin list, fills and size")
+    pdf.body(
+        "Notebooks 09 and 11 were added on 2026-09-27, after the forward test. Notebook 09 rebuilds "
+        "the daily data from Binance's public archive, which keeps the files of delisted pairs, and "
+        "checks it against the research data: every price and funding rate the two have in common "
+        "is the same. Notebook 11 reruns the frozen book with one assumption at a time made more "
+        "realistic. Like section 5, it re-scores the lockbox with corrected inputs and chooses "
+        "nothing on it, and v2 (section 8) was registered before notebook 11 was first run."
+    )
+    pdf.h2("7.1 The coin list")
+    pdf.body(
+        "The research coin list is the 150 most-traded USDT pairs on the day of the fetch, "
+        "2026-07-06, so it only holds coins that were still big then. From 2020 to July 2026, "
+        f"{pct(v['surv'], 0)} of the universe's coin-days belonged to coins it left out: coins that "
+        "were delisted or renamed, such as EOS, MATIC, XMR, WAVES and MKR, and coins that had just "
+        "shrunk, such as VET, SAND, GRT, KAVA and EGLD. The share is highest in the early years, "
+        "when the list was furthest from its fetch date:"
+    )
+    yrs = v["surv_year"]
+    pdf.table_block([["Year"] + [str(y) for y in yrs.index],
+                     ["Coin-days the list did not have"] + [pct(x, 0) for x in yrs]],
+                    title="Share of the daily top-100 universe outside the research coin list",
+                    widths=(54,) + (16,) * len(yrs))
+    pdf.body(
+        "The list had three smaller faults. Its filter for leveraged tokens dropped any name ending "
+        "in UP, which removed JUP and SYRUP. Six pegged assets got in: the euro, the gold tokens PAXG "
+        "and XAUT, and three newer dollar tokens. EUR and PAXG sat in the universe for most of the "
+        "sample, and Carry could trade the two gold perps. And five tokenized US stocks, which "
+        "Binance began listing in June 2026, entered the universe during the forward test. The "
+        "archive needed care too: it keeps writing a frozen, zero-volume bar every day for a perp "
+        "that has been delisted, so perp data is only used on days the contract traded and priced "
+        "within 20% of spot."
+    )
+    pdf.h2("7.2 The frozen book on corrected data")
+    step_labels = [("0 as run", "0 As run"), ("0b archive data", "0b Same list, archive"),
+                   ("1 non-crypto out", "1 Non-crypto out"), ("2 every pair", "2 Every pair"),
+                   ("3 carry on perps", "3 Carry on perps"), ("4 limit fills", "4 Limit fills")]
+    rows = [["Step", "WF dev", "WF gate", "WF lockbox", "WF fwd", "EW dev", "EW gate", "EW lockbox", "EW fwd"]]
+    for key, lab in step_labels:
+        rows.append([lab] + [sr(st[(key, "walk_forward")][w]) for w in RWIN]
+                    + [sr(st[(key, "equal_weight")][w]) for w in RWIN])
+    pdf.table_block(rows, title="The frozen book, one fix at a time (Sharpe; each step keeps the ones before it)",
+                    widths=(38, 16, 16, 18, 15, 16, 16, 18, 15))
+    pdf.body(
+        "Rebuilt from the archive, the research list gives the same numbers (step 0b), so the data "
+        "source is not the issue. Taking out the non-crypto assets costs a little: the walk-forward "
+        f"book's lockbox Sharpe goes from {lk_wf['sharpe']:.2f} to "
+        f"{st[('1 non-crypto out', 'walk_forward')]['Lockbox']:.2f}. Step 2 is the one that matters. "
+        "With every pair in the universe the walk-forward book's lockbox Sharpe is "
+        f"{sr(st[('2 every pair', 'walk_forward')]['Lockbox'])} and the equal-weight book's "
+        f"{sr(st[('2 every pair', 'equal_weight')]['Lockbox'])}, and the equal-weight book loses money "
+        f"on the gate as well ({sr(st[('2 every pair', 'equal_weight')]['Gate'])})."
+    )
+    rows = [["Sleeve, step", "Dev", "Gate", "Lockbox", "Forward"]]
+    for s in SLEEVE_NAMES:
+        for key, lab in [("0 as run", "as run"), ("2 every pair", "every pair"), ("4 limit fills", "limit fills")]:
+            rows.append([f"{s.capitalize()}, {lab}"] + [sr(st[(key, s)][w]) for w in RWIN])
+    pdf.table_block(rows, title="The three sleeves at steps 0, 2 and 4 (Sharpe)", widths=(52, 20, 20, 20, 20))
+    pdf.body(
+        "Orderflow and Carry lose money on the gate and the lockbox once every pair is in. "
+        "Seasonality keeps its dev and gate numbers and still loses on the lockbox. The coins that "
+        "did the damage are mostly ones the research list never had. On the gate, four of "
+        "Orderflow's five worst coins were missing from it, OM above all, which collapsed in April "
+        "2025, and so were all five of Carry's: delisting casualties such as VIDT and BNX, which the "
+        "z-score weights bought because their funding had turned negative. Measuring Carry on perp "
+        "prices (step 3) helps it a little."
+    )
+    pdf.h2("7.3 Limit orders that have to fill")
+    pdf.body(
+        "The research charges 7 bps and assumes every limit order fills at the close. In step 4 an "
+        "order placed at the close only fills if the next day trades through its price, and a "
+        "missed order is replaced at the next close. Almost all of them fill:"
+    )
+    rows = [["", "Orders filled", "Positions missed", "Return, missed buy", "Return, missed sell",
+             "P&L, all filled", "P&L, fill model"]]
+    for s in ["orderflow", "carry"]:
+        r = fills.loc[s]
+        rows.append([s.capitalize(), pct(r["filled share of orders"]), pct(r["missed share of positions"], 2),
+                     pct(r["return where a buy missed"]), pct(r["return where a sell missed"]),
+                     pts(r["price P&L, every order filled"]), pts(r["price P&L, fill model"])])
+    pdf.table_block(rows, title="Limit orders on dev, on coins that traded the next day (P&L in points: sums of "
+                                "daily price returns, Carry's before funding)",
+                    widths=(22, 22, 25, 27, 27, 24, 23))
+    of_fill = fills.loc["orderflow"]
+    pdf.body(
+        "The orders that miss are the ones the price ran away from. Where a buy missed, the coin "
+        f"rose {pct(of_fill['return where a buy missed'])} that day on average, and where a sell "
+        f"missed it fell {pct(-of_fill['return where a sell missed'])}. Missing "
+        f"{pct(of_fill['missed share of positions'], 1)} of its positions costs Orderflow "
+        f"{(of_fill['price P&L, every order filled'] - of_fill['price P&L, fill model']) * 100:.0f} of its "
+        f"{of_fill['price P&L, every order filled'] * 100:.0f} points of price P&L on dev, and its dev "
+        f"Sharpe falls from {st[('3 carry on perps', 'orderflow')]['Dev']:.2f} to "
+        f"{st[('4 limit fills', 'orderflow')]['Dev']:.2f}. Carry trades less and loses less."
+    )
+    pdf.h2("7.4 Size and capacity")
+    pdf.body("The same Orderflow rule on the largest coins and on the smaller ones shows where the "
+             "research list's edge came from:")
+    rows = [["Universe, coins", "Dev", "Gate", "Lockbox", "Forward"]]
+    for lst in ["research list", "every pair"]:
+        for b in ["top 30", "top 50", "ranks 51-100", "top 100"]:
+            rows.append([f"{lst.capitalize()}, {b}"] + [sr(sz[(lst, b)][w]) for w in RWIN])
+    pdf.table_block(rows, title="Orderflow by coin size (Sharpe)", widths=(52, 20, 20, 20, 20))
+    pdf.body(
+        "On the research list, Orderflow's gate and lockbox results come from the coins ranked 51 "
+        f"to 100 ({sr(sz[('research list', 'ranks 51-100')]['Gate'])} and "
+        f"{sr(sz[('research list', 'ranks 51-100')]['Lockbox'])}). On every pair those coins lose money "
+        f"on both ({sr(sz[('every pair', 'ranks 51-100')]['Gate'])} and "
+        f"{sr(sz[('every pair', 'ranks 51-100')]['Lockbox'])}). The research list's small coins were the "
+        "ones that went on to be big in 2026, which is how survivorship shows up in a signal.\n\n"
+        "Market impact is modelled per coin with the square-root law: trading Q dollars of a coin "
+        "with daily volume V and daily volatility sigma costs about y x sigma x sqrt(Q/V) on top of "
+        "the 7 bps fee, with y between 0.5 and 1. Binance volume alone makes both settings on the "
+        "harsh side. On the research-list sleeves, over 2020 to July 2026:"
+    )
+    rows = [["Money run", "Orderflow, y = 0.5", "Orderflow, y = 1", "Carry, y = 0.5", "Carry, y = 1"]]
+    for aum in ["no impact", "$0.1M", "$1M", "$10M", "$50M"]:
+        rows.append([aum] + [sr(cap.loc[(s, aum), f"sharpe y={y}"]) for s in ["orderflow", "carry"] for y in ["0.5", "1"]])
+    pdf.table_block(rows, title="Research-list sleeves with square-root market impact (Sharpe)",
+                    widths=(30, 32, 32, 32, 32))
+    pdf.body(
+        "Even taken at face value, the research-list Orderflow could not have run much money: its "
+        f"Sharpe falls from {cap.loc[('orderflow', 'no impact'), 'sharpe y=1']:.2f} to "
+        f"{cap.loc[('orderflow', '$1M'), 'sharpe y=0.5']:.2f} at $1M with y = 0.5, and below zero with "
+        "y = 1. Carry holds up to somewhere between $1M and $10M."
+    )
+    pdf.h2("7.5 The pairs baseline, fully charged")
+    pc = v["pairs_c"]
+    pdf.body(
+        "Charging the pairs engine for every position carried across a rebalance, an upper bound on "
+        f"what it missed, moves its dev Sharpe from {sr(pc['as run']['Dev'])} to "
+        f"{sr(pc['charged']['Dev'])}, its gate Sharpe from {sr(pc['as run']['Gate'])} to "
+        f"{sr(pc['charged']['Gate'])} and its lockbox Sharpe from {sr(pc['as run']['Lockbox'])} to "
+        f"{sr(pc['charged']['Lockbox'])}."
+    )
+    pdf.h2("7.6 The frozen book's out-of-sample record")
+    fb_ = v["fwd_beta"]
+    pdf.body(
+        "The lockbox year and the forward test are the only data the frozen book never influenced. "
+        f"Together, as run, they give the walk-forward book a Sharpe of {oos['sharpe']:.2f} over "
+        f"{oos['n']} days (t = {oos['t']:.1f}; block-bootstrap 95% interval {oos['ci'][0]:.2f} to "
+        f"{oos['ci'][1]:.2f}) and the equal-weight book {oos['sharpe_ew']:.2f}. In the forward window "
+        "the walk-forward book's beta to BTC was lower than in "
+        f"{pct(1 - fb_.loc['walk_forward', 'share of research windows lower'], 0)} of the earlier 82-day "
+        f"stretches, and Orderflow's lower than in "
+        f"{pct(1 - fb_.loc['orderflow', 'share of research windows lower'], 0)}."
+    )
+    pdf.figure(figs["survivorship"])
+    pdf.caption("Growth of $1 on a log scale for the frozen book as run (research coin list) and on "
+                "every pair. Dotted line: gate starts; dashed red: lockbox opens; dashed grey: forward "
+                "test starts.")
+
+    # 8. v2
+    v2_lab = {"Book": "v2 book", "Orderflow": "Orderflow", "Carry": "Carry"}
+    pdf.h1("8. Version 2, registered before testing")
+    pdf.body(
+        "v2 is the book rebuilt around what the audits found. Its rules were committed to the "
+        "repository on 2026-09-27, in notebook 10 and strategies.py, before any v2 number existed, "
+        "and the next commit adds the results. It makes five changes, none chosen by comparing "
+        "results. It drops Seasonality, which fails notebook 02's rule once its resizing trades are "
+        "charged. It weights Carry by rank instead of z-score, so no coin can take a whole side of "
+        "the sleeve. It measures Carry on perp prices. It trades the every-pair universe. And it "
+        "combines its two sleeves with equal weights, which beat the walk-forward weights on dev "
+        "(0.46 against 0.40 over the same dates) and on the gate (2.90 against 2.52). v2 is never run "
+        "on the lockbox or on the forward-test window, since both have been seen."
+    )
+    pdf.table_block(perf_rows(v2s, [(n, w) for n in v2_lab for w in ["Dev", "Gate"]],
+                              [f"{v2_lab[n]}, {w.lower()}" for n in v2_lab for w in ["Dev", "Gate"]]),
+                    title="v2 on dev and gate, every pair (t-stat of alpha in brackets)", widths=PERF_WIDTHS)
+    pdf.body(
+        f"On dev and gate v2 has a Sharpe of {v2s[('Book', 'Dev')]['sharpe']:.2f} and "
+        f"{v2s[('Book', 'Gate')]['sharpe']:.2f}, and nearly all of it comes from Carry: weighted by "
+        f"rank, on perp prices and across every pair, Carry has {v2s[('Carry', 'Dev')]['sharpe']:.2f} "
+        f"and {v2s[('Carry', 'Gate')]['sharpe']:.2f}, at about half the frozen Carry's volatility "
+        f"({pct(v2s[('Carry', 'Gate')]['vol'], 0)} against {pct(sl[('carry', 'Gate')]['vol'], 0)} on the "
+        "gate). Orderflow does not survive the wider universe "
+        f"({sr(v2s[('Orderflow', 'Dev')]['sharpe'])} on dev, {sr(v2s[('Orderflow', 'Gate')]['sharpe'])} on "
+        "the gate), so by notebook 03's rule it would not have been kept; it stays because v2's "
+        "rules were fixed before this check. The three rows are in the registry.\n\n"
+        "The test is every day from 2026-09-28, the first full day after v2 was registered. Notebook "
+        "12 adds each month from the archive, delisted coins included, and reports v2's book and each "
+        "sleeve alongside the frozen book. At a Sharpe near 1.5, a t-stat of 2 takes about two years "
+        "of data."
+    )
+
+    # 9. twsq
+    pdf.h1("9. The sleeves in twsq")
     pdf.body(
         "alphas/ holds the three sleeves written as alphas for twsq, an execution "
         "framework. twsq backtests them on Binance daily bars over 700 days (2024-08-06 to "
@@ -1103,39 +1433,37 @@ def build_pdf(d: dict, v: dict, figs: dict) -> int:
                     widths=(34, 16, 14, 13, 14, 16, 13))
     pdf.body(
         "On 20 large coins none of the three does much. SeasonalMomentum is roughly flat, which "
-        "fits the charged Seasonality numbers in section 5. OrderflowFollow loses a little, so "
-        "the order-flow effect in the research seems to come from the wider, less liquid part of "
-        "the universe, which also limits how much money it could take. FundingCarry's price leg "
-        "is slightly positive, without the funding income that the research sleeve earns."
+        "fits the charged Seasonality numbers in section 5. OrderflowFollow loses a little; "
+        "section 7.4 shows why, since the research list's order-flow edge came from its smaller "
+        "coins, and those were survivors. FundingCarry's price leg is slightly positive, without "
+        "the funding income that the research sleeve earns."
     )
 
-    # 8. Limitations
-    pdf.h1("8. Limitations")
+    # 10. Limitations
+    pdf.h1("10. Limitations")
     pdf.bullets([
-        "Survivorship. The universe is built from the pairs Binance listed on the fetch date, so "
-        "coins delisted earlier are missing. The hourly and funding panels are worse: their 60 "
-        "names were picked by volume at fetch time, which favours coins that did well. The "
-        "point-in-time universe limits which names can trade on each day but cannot add back the "
-        "missing ones.",
-        "One exchange. Prices, volumes, taker flow and funding all come from Binance.",
-        "Perp versus spot. The carry backtest adds funding payments to spot returns and ignores "
-        "the basis between perp and spot prices.",
-        "Concentration. Carry weights coins by their funding z-score with no cap per coin, so one "
-        "coin with extreme funding can take a whole side of the sleeve, as SOL did in November "
-        "2022 and DEXE in July 2026 (section 6).",
-        "Limit-order fills. Orderflow and Carry assume every limit order fills at 7 bps. "
-        "Section 5.2 shows what higher costs would do.",
-        "Pairs baseline. The pairs engine does not charge for opening a position that a newly "
-        "selected pair already has on, or for closing pairs dropped at a rebalance. Charging them "
-        "would only lower a baseline that already loses money.",
+        "Survivorship. The research coin list held only coins that were still big in July 2026 "
+        "(section 7.1), and every research number before section 7 is measured on it. Notebooks 09 "
+        "to 12 use every pair, but the hourly data behind the fast-reversal test (section 3.4) was "
+        "not rebuilt.",
+        "One exchange. Prices, volumes, taker flow and funding all come from Binance, and taker flow "
+        "has no second source here.",
+        "Perp versus spot. The research Carry backtest adds funding to spot returns. Section 7.2 "
+        "re-measures it on perp prices, which changes little, and v2 uses perp prices.",
+        "Concentration. The research Carry sleeve weights coins by funding z-score with no cap, so "
+        "one coin can take a whole side of it, as SOL did in November 2022 and DEXE in July 2026. "
+        "v2 weights by rank.",
+        "Fills and size. Section 7.3 shows what fills cost Orderflow and section 7.4 how little "
+        "money it could have taken. The square-root impact model is a rough guide, and Binance "
+        "volume understates what the whole market trades.",
         "Cost of resizing. Scaling returns by a volatility target or a calendar multiplier does "
         "not charge for the trades the resizing needs. For the volatility target this is small "
         f"(it moves momentum's dev Sharpe by {v['untilted']['Dev'] - unt_c['Dev']:.2f}); for the "
         "weekday overlay it is not, as section 5.1 shows.",
-        "Capacity. Nothing here was sized for real money. The twsq results suggest the order-flow "
-        "edge sits in smaller names, where large trades would move prices.",
+        "Tokenized stocks. The list in data.TOKENIZED_STOCKS is kept by hand; notebook 12 flags any "
+        "new listing that looks like one.",
         f"Sample size. The lockbox is one year and the forward test {F['Book, walk-forward']['n']} "
-        "days, and the deflated Sharpe is below 0.95 on every window.",
+        "days, the deflated Sharpe is below 0.95 on every window, and v2 has no test data yet.",
     ])
 
     # Appendix
@@ -1144,7 +1472,8 @@ def build_pdf(d: dict, v: dict, figs: dict) -> int:
         "Every configuration tested, in the order it was run, with its dev "
         f"({DEV_START} to {DEV_END}) and gate ({GATE_START} to {GATE_END}) Sharpe. Rows 1 to "
         f"{N_TRIALS} are the research trials used for the deflated Sharpe; rows {N_TRIALS + 1} and "
-        f"{N_TRIALS + 2} are the two combination rules for the book."
+        f"{N_TRIALS + 2} are the two combination rules for the book, and rows {N_TRIALS + 3} to "
+        f"{N_TRIALS + 5} are v2, logged after it was registered (section 8)."
     )
     rows = [["#", "Family", "Config", "Dev", "Gate"]]
     for i, r in reg.iterrows():

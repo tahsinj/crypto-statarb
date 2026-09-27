@@ -13,7 +13,8 @@ the full research trail, including the ideas that failed.
 
 - Data comes straight from Binance's public API: daily bars for the top 150
   USDT pairs since 2018, hourly bars for the 60 most liquid, and perp funding
-  rates.
+  rates. Notebooks 09 to 12 rebuild the daily data from Binance's public
+  archive with every pair that ever traded, delisted ones included.
 - Each day's universe is the 100 most liquid coins as of the previous day, so
   no backtest trades a coin it could not have known about.
 - Weights set at the close of day t earn day t+1's return, and every trade is
@@ -29,12 +30,17 @@ the full research trail, including the ideas that failed.
 
 ## Results
 
+In short: on the research data the book held up on its lockbox year, but the
+research coin list turned out to hold only survivors, and with every pair
+included most of the result goes away. A second version, registered before
+testing, is now running on new data.
+
 The book combines three sleeves: momentum with weekday exposure halved
 (Seasonality), a 10-day taker-imbalance follower (Orderflow) and a funding
 carry trade (Carry). The main version uses walk-forward mean-variance weights;
 an equal-weight version runs alongside.
 
-Over the whole sample, 2020-01 to 2026-07:
+As run on the research coin list, over the whole sample, 2020-01 to 2026-07:
 
 | | Ann. return | Ann. vol | Sharpe | Max DD | Beta BTC | Alpha (t) |
 |---|---:|---:|---:|---:|---:|---:|
@@ -65,7 +71,8 @@ On the lockbox the walk-forward book has an alpha of 9.5% a year (Newey-West
 t = 1.25) and a block-bootstrap 95% interval for its Sharpe of [-0.42, 3.44].
 The deflated Sharpe is 0.49 on the full sample and 0.20 on the lockbox, far
 below the usual 0.95. The book made money with almost no market exposure, but
-the evidence is not strong enough to call it proven.
+the evidence is not strong enough to call it proven, and the realism checks
+below show that most of it came from the coin list.
 
 Two notes on the alphas. For the momentum-based sleeves most of the alpha is
 market timing: trend following flips between long and short, so its average
@@ -104,6 +111,39 @@ confirms nor overturns the lockbox, but it shows that one coin can take over
 the carry sleeve. The book stays as frozen, since a cap chosen now would be
 fitted to this window (report section 6).
 
+**Realism checks.** Notebooks 09 and 11 rebuild the data from Binance's
+public archive, which keeps delisted pairs, and rerun the frozen book one fix
+at a time (report section 7). The biggest finding is that the research coin
+list held only survivors. It is the 150 most-traded pairs of July 2026, and
+46% of the universe's coin-days before then belonged to coins it left out
+(EOS, MATIC, XMR, VET, SAND and many more). On every pair most of the result
+goes away:
+
+| Lockbox Sharpe | Walk-forward | Equal weight |
+|---|---:|---:|
+| As run (research coin list) | +1.46 | +1.23 |
+| Same list, archive data | +1.45 | +1.23 |
+| Pegged assets and tokenized stocks out | +1.26 | +1.20 |
+| Every pair, delisted coins included | +0.36 | -0.62 |
+| and Carry on perp prices | +0.02 | -0.46 |
+| and limit orders that have to fill | +0.14 | -0.69 |
+
+Orderflow and Carry lose money on the gate and the lockbox once every pair is
+in, and the coins that did the damage (OM, VIDT, BNX and others) were mostly
+missing from the research list. Orderflow's research edge sat in its smaller
+coins, which were survivors, and even on the research list it could not have
+run much more than $1M. Requiring limit orders to actually fill costs it most
+of what is left: 99% of them fill, but the ones that miss are the days the
+price runs away.
+
+**v2.** Notebook 10 registers a second version in the repository before
+testing it: Orderflow plus a Carry sleeve weighted by rank and measured on
+perp prices, on every pair, with equal weights and no Seasonality. On dev and
+gate it has a Sharpe of 1.39 and 1.12, nearly all from Carry (1.76 and 2.41).
+Its Orderflow sleeve fails the gate (-0.78). v2 is never run on the lockbox or
+on the forward window. Its test is every day from 2026-09-28, and notebook 12
+adds each month.
+
 ## What worked and what didn't
 
 - Baseline time-series momentum decayed: Sharpe +1.65 on dev, +0.43 on the
@@ -111,16 +151,21 @@ fitted to this window (report section 6).
 - Halving momentum's weekday exposure looked better on both windows (dev
   +1.79, gate +1.24) but lost money on the lockbox (-0.56), and with correct
   costs it would not have passed selection (above).
-- Following the 10-day taker-buy imbalance held up best: dev +0.89, gate
-  +2.12, lockbox +1.95, then -10.8% over the forward test. Every reversal
-  variant built on order flow lost on dev.
+- Following the 10-day taker-buy imbalance held up best on the research
+  coin list: dev +0.89, gate +2.12, lockbox +1.95, then -10.8% over the
+  forward test. On every pair it loses money on the gate and the lockbox.
+  Every reversal variant built on order flow lost on dev.
 - Shorting high-funding perps against low-funding ones: dev +1.01, gate
   +2.19, lockbox +0.88. On dev, 63% of its P&L is funding income. Its forward
-  gain came from a single coin.
+  gain came from a single coin. On every pair the z-score version loses;
+  weighted by rank on perp prices (v2) it has dev +1.76 and gate +2.41.
 - Hourly cross-sectional reversal has a real gross edge (gross Sharpe +4.83 at
   a 4-hour lookback), but hourly trading costs 461% a year against a 272%
   gross return. No hourly config passed.
 - Equal weight beat walk-forward weights on every window except the lockbox.
+- The research coin list, picked by volume in July 2026, held only survivors.
+  With every pair included, the frozen book's lockbox Sharpe is +0.36
+  (walk-forward) and -0.62 (equal weight).
 - Run in twsq on a fixed list of 20 large coins, the three sleeves are close
   to flat (Sharpe +0.07, -0.15 and +0.22 over 2024-08 to 2026-07). The
   order-flow edge seems to live in the smaller names of the top 100.
@@ -129,15 +174,16 @@ fitted to this window (report section 6).
 
 ```
 quantlib/                 shared library used by every notebook
-  fetch.py                Binance fetchers and the local cache
+  fetch.py                Binance fetchers, the public data archive, the local cache
   data.py                 panels and the point-in-time universe
   signals.py              z-scores, calendar masks, weights
-  backtest.py             vectorised backtest: one-day weight lag, turnover costs
+  backtest.py             vectorised backtest: one-day weight lag, turnover costs,
+                          and a fill model for limit orders
   pairs.py                pairs selection and trading (reversal baseline)
-  strategies.py           sleeve definitions, costs as parameters
+  strategies.py           sleeve definitions (frozen book and v2), costs as parameters
   metrics.py              performance stats, significance tests, alpha/beta
   trials.py               trial registry behind the deflated Sharpe
-  robustness.py           walk-forward weights and other portfolio helpers
+  robustness.py           walk-forward weights, market impact, other helpers
   plotting.py             chart helpers and the plot style
 notebooks/
   00_data                 fetch and cache Binance data; build the panels
@@ -149,6 +195,11 @@ notebooks/
   06_portfolio            the combined book and the one lockbox run
   07_posthoc              checks added after the lockbox, whole-sample figures
   08_forward              the frozen book on data after the freeze
+  09_archive_data         every Binance pair from the public archive, checked
+                          against the research data
+  10_v2                   v2, registered before testing; dev and gate only
+  11_realism              the frozen book re-measured one fix at a time
+  12_forward_log          the monthly out-of-sample record, frozen book and v2
 alphas/                   the three sleeves as twsq alphas, with backtest CSVs
 tests/                    look-ahead, neutrality, cost and fetch tests
 reports/
@@ -169,7 +220,8 @@ uv pip install --python .venv -r requirements.txt
 for f in tests/test_*.py; do .venv/bin/python "$f"; done
 
 # notebooks, in order
-for nb in 00_data 01_baselines 02_seasonality 03_orderflow 04_carry 05_fastrev 06_portfolio 07_posthoc 08_forward; do
+for nb in 00_data 01_baselines 02_seasonality 03_orderflow 04_carry 05_fastrev 06_portfolio 07_posthoc \
+          08_forward 09_archive_data 10_v2 11_realism 12_forward_log; do
   .venv/bin/jupytext --to notebook notebooks/$nb.py
   .venv/bin/jupyter nbconvert --to notebook --execute --inplace notebooks/$nb.ipynb
 done
@@ -188,8 +240,14 @@ Things to know before rerunning:
 - Notebook 08 downloads 2026-05-01 to 2026-09-26 for the same coins (the dates
   are pinned) and caches it under `data/raw/forward_*`. It checks the overlap
   with the cached data before using anything new.
+- Notebook 09 downloads about 100,000 small files from data.binance.vision
+  the first time (around an hour), cached under `data/raw/archive/`.
+- Notebook 12 is the forward log. Once a month, set `END` to the last
+  complete UTC day, run it and commit it, so each month's numbers are on
+  record before the next month's data exists.
 - The trial registry (`data/processed/trial_registry.csv`) skips configs it
-  already holds, so rerunning a notebook does not add trials. Notebook 06
+  already holds, so rerunning a notebook does not add trials. It has 48
+  research rows, the two combination rules and three v2 rows; notebook 06
   expects exactly 48 research rows.
 - The twsq alphas run in a separate environment; see `alphas/README.md`.
 
@@ -198,10 +256,10 @@ the `.ipynb` files keep the executed outputs.
 
 ## Limitations
 
-The report lists them in full. The main ones: the universe comes from coins
-Binance still listed in 2026, so earlier delistings are missing (the hourly
-and funding panels, picked by volume at fetch time, lean further toward
-survivors); everything is Binance-only; the carry backtest adds funding to
-spot returns and ignores the perp basis; Carry's weights have no cap per coin;
-Orderflow and Carry assume their limit orders always fill; and a one-year
-lockbox and an 82-day forward test are short.
+The report lists them in full. The main ones: every research number before
+report section 7 is measured on a coin list that held only survivors, and the
+hourly data behind the fast-reversal test was not rebuilt; everything is
+Binance-only; the frozen Carry sleeve has no cap per coin; the market-impact
+model is a rough guide; the list of tokenized stocks is kept by hand; and a
+one-year lockbox and an 82-day forward test are short, while v2 has no test
+data yet.
