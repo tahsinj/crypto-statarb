@@ -183,20 +183,36 @@ step[3] = pd.concat([s3, book(s3)], axis=1)
 w_of = strategies.orderflow_weights(A["taker_imbalance"], uni2)
 of4, held_of = backtest.run_limit_fills(w_of, A["returns"], A["price"], A["high"], A["low"], cost_bps=7.0)
 w_ca = strategies.carry_weights(fund2, uni2)
-perp_px = A["perp_price"].reindex(columns=uni2.columns)
-ca4, held_ca = backtest.run_limit_fills(w_ca, perp_returns, perp_px, A["perp_high"].reindex(columns=uni2.columns),
-                                        A["perp_low"].reindex(columns=uni2.columns), cost_bps=7.0)
+perp_px, perp_hi, perp_lo = (A[k].reindex(columns=uni2.columns) for k in ["perp_price", "perp_high", "perp_low"])
+ca4, held_ca = backtest.run_limit_fills(w_ca, perp_returns, perp_px, perp_hi, perp_lo, cost_bps=7.0)
 carry4 = ca4.net_returns - (held_ca * fund2).sum(axis=1).reindex(ca4.net_returns.index)
 s4 = s3.assign(orderflow=of4.net_returns.reindex(s3.index), carry=carry4.reindex(s3.index))
 step[4] = pd.concat([s4, book(s4)], axis=1)
 
 fills = {}
-for name, w, held in [("orderflow", w_of, held_of), ("carry", w_ca, held_ca)]:
-    ordered = (w.reindex_like(held).fillna(0.0).shift(1) - held.shift(1)).abs().sum(axis=1)
-    done = held.diff().abs().sum(axis=1)
-    fills[name] = {k: done.loc[sl].sum() / ordered.loc[sl].sum() for k, sl in WINDOWS.items()}
-    print(f"{name}: share of the ordered notional that filled, dev: {fills[name]['dev']:.1%}")
+for name, w, held, rets, close, hi, lo in [
+        ("orderflow", w_of, held_of, A["returns"], A["price"], A["high"], A["low"]),
+        ("carry", w_ca, held_ca, perp_returns, perp_px, perp_hi, perp_lo)]:
+    target = w.reindex_like(held).fillna(0.0).shift(1)          # what run() holds each day
+    traded = hi.reindex_like(held).notna() & lo.reindex_like(held).notna() & close.reindex_like(held).shift(1).notna()
+    missed = (target - held).where(traded)                       # a coin with no bar cannot fill at all
+    r, sl = rets.reindex_like(held), WINDOWS["dev"]
+    fills[name] = {
+        "filled share of orders": held.diff().abs().loc[sl].sum().sum()
+                                  / (target - held.shift(1)).abs().where(traded).loc[sl].sum().sum(),
+        "missed share of positions": missed.abs().loc[sl].sum().sum() / target.abs().where(traded).loc[sl].sum().sum(),
+        "return where a buy missed": r.where(missed > 1e-9).loc[sl].stack().mean(),
+        "return where a sell missed": r.where(missed < -1e-9).loc[sl].stack().mean(),
+        "price P&L, every order filled": (target * r).sum(axis=1).loc[sl].sum(),
+        "price P&L, fill model": (held * r).sum(axis=1).loc[sl].sum(),
+    }
+print("dev, orders on coins that traded the next day; P&L is the price leg (all of it for Orderflow, "
+      "Carry's before funding), as sums of daily returns")
+pd.DataFrame(fills).T.round(4)
 # -
+
+# Almost every order fills; the few that miss are the ones the price ran
+# away from, and they carry most of the damage.
 
 # ## The steps side by side (Sharpe)
 
@@ -328,10 +344,13 @@ pd.DataFrame(beta_rows).T.round(3)
 # 2025. All five of z-score Carry's were: delisting casualties such as VIDT
 # and BNX, which it bought because their funding had turned negative.
 #
-# The other steps matter less. Perp prices help Carry a little. Limit orders
-# that have to be filled hurt Orderflow: only 58% of what it orders fills on
-# dev, the misses fall on the days the price runs away, and its dev Sharpe
-# drops from 0.44 to 0.09. Even on the research list, most of Orderflow's
+# The other steps matter less, with one exception. Perp prices help Carry a
+# little. Limit orders that have to be filled hurt Orderflow even though
+# about 99% of what it orders fills the next day. The misses are the days the
+# price ran away: where a buy missed, the coin rose 7.1% that day on average,
+# and where a sell missed it fell 5.7%. Missing 0.3% of the positions costs
+# about 30 of Orderflow's 70 points of gross P&L on dev, and its dev Sharpe
+# falls from 0.44 to 0.09. Even on the research list, most of Orderflow's
 # edge is gone at $1M under the square-root impact model (0.30 or -0.27,
 # depending on the impact coefficient, from 0.87 with none); Carry lasts to
 # somewhere between $1M and $10M. Charging the pairs baseline for its
