@@ -345,3 +345,40 @@ for name in ["price", "returns", "dollar_volume", "taker_imbalance"]:
     rl[name].to_parquet(OUT / "research_list" / f"{name}.parquet")
 research_list_funding.to_parquet(OUT / "research_list" / "funding.parquet")
 print(f"research list: {rl['price'].shape[1]} coins, funding for {research_funding.shape[1]} perps")
+
+# ## Hourly bars for the fast-reversal check
+#
+# Notebook 05's hourly test used 60 coins picked by volume at fetch time.
+# Here every coin that was in the daily top-100 universe at any point from
+# 2020-06 to the end of the gate gets hourly bars, from the month before it
+# first entered to the day it last left. Only closes are kept.
+
+# +
+HOURLY_START, HOURLY_END = "2020-06-01", "2025-06-30"
+member = universe.loc["2020-06-01":HOURLY_END]
+ranges = {}
+for coin in member.columns[member.any()]:
+    days = member.index[member[coin]]
+    ranges[f"{coin}USDT"] = ((days.min() - pd.DateOffset(months=1)).strftime("%Y-%m-%d"),
+                             days.max().strftime("%Y-%m-%d"))
+raw_1h = fetch.refresh(RAW / "archive_spot_1h.pkl.zip",
+                       lambda: fetch.fetch_archive("spot", sorted(ranges), "2020-05-01", HOURLY_END, ARCHIVE,
+                                                   workers=24, interval="1h", ranges=ranges, fields=("price",)),
+                       max_age_days=float("inf"))
+price_1h = raw_1h.xs("price", axis=1, level=1).sort_index().loc[:HOURLY_END]
+print(f"hourly closes: {price_1h.shape[1]} coins, {price_1h.index.min()} to {price_1h.index.max()}")
+
+# the research hourly panel's coins should match it where the two overlap
+research_1h = pd.read_parquet(PROC / "price_1h.parquet")
+both = [c for c in research_1h.columns if c in price_1h.columns]
+a = research_1h.loc[HOURLY_START:HOURLY_END, both]
+b = price_1h.reindex(index=a.index, columns=both)
+m = a.notna() & b.notna()
+print(f"hourly closes compared with the research panel: {int(m.to_numpy().sum()):,}, "
+      f"differ: {int((m & ~pd.DataFrame(np.isclose(a, b, rtol=1e-9), index=a.index, columns=both)).to_numpy().sum())}")
+price_1h.to_parquet(OUT / "price_1h.parquet")
+# -
+
+# The 91 hourly closes that differ from the research panel are off by a
+# quarter of a percent at the median and fall on a handful of days, most of
+# them in December 2021: too few to matter.
