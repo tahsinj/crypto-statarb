@@ -163,7 +163,7 @@ pd.concat([sleeves, book], axis=1).to_parquet(PROC / "v2_dev_gate.parquet")
 
 # ## After the first run
 #
-# Added with the outputs. v2 has a Sharpe of 1.40 on dev and 1.12 on the
+# Added with the outputs. v2 has a Sharpe of 1.39 on dev and 1.12 on the
 # gate, and almost all of it comes from Carry: rank-weighted, on perp prices
 # and across every pair, Carry has 1.76 on dev and 2.41 on the gate, at
 # about half the frozen Carry's volatility (15% against 31%). Rank weighting
@@ -171,7 +171,7 @@ pd.concat([sleeves, book], axis=1).to_parquet(PROC / "v2_dev_gate.parquet")
 # about 2% of the sleeve, and it only went above a quarter in the first
 # weeks of January 2020, when a handful of coins had funding data.
 #
-# Orderflow is a different story. On every pair it has a Sharpe of 0.45 on
+# Orderflow is a different story. On every pair it has a Sharpe of 0.44 on
 # dev and -0.78 on the gate, against 0.89 and 2.12 on the research coin
 # list, so by notebook 03's own rule it would not have been kept. It stays
 # in v2, because v2's rules were fixed before this run. Notebook 12 reports
