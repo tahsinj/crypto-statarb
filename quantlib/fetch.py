@@ -289,11 +289,11 @@ def archive_pairs(market: str = "spot", quote: str = "USDT") -> list[str]:
     return sorted(p for p in pairs if p.endswith(quote) and len(p) > len(quote))
 
 
-def archive_months(market: str, pair: str) -> dict[pd.Period, str]:
+def archive_months(market: str, pair: str, interval: str = "1d") -> dict[pd.Period, str]:
     """The monthly files the archive has for one pair, by month."""
     root = ARCHIVE_ROOTS[market].format(freq="monthly") + pair + "/"
     if market != "funding":
-        root += "1d/"
+        root += f"{interval}/"
     _, files = archive_list(root)
     out = {}
     for f in files:
@@ -310,6 +310,7 @@ def archive_keys(
     start: pd.Timestamp,
     end: pd.Timestamp,
     latest_month: pd.Period,
+    interval: str = "1d",
 ) -> list[str]:
     """Files covering [start, end] for one pair.
 
@@ -322,9 +323,9 @@ def archive_keys(
     keys = [k for p, k in sorted(monthly.items()) if first <= p <= last]
     if market == "funding" or not monthly or max(monthly) != latest_month or last <= latest_month:
         return keys
-    daily_root = ARCHIVE_ROOTS[market].format(freq="daily") + f"{pair}/1d/"
+    daily_root = ARCHIVE_ROOTS[market].format(freq="daily") + f"{pair}/{interval}/"
     day0 = max(latest_month.end_time.normalize() + pd.Timedelta(days=1), start)
-    return keys + [f"{daily_root}{pair}-1d-{d:%Y-%m-%d}.zip" for d in pd.date_range(day0, end)]
+    return keys + [f"{daily_root}{pair}-{interval}-{d:%Y-%m-%d}.zip" for d in pd.date_range(day0, end)]
 
 
 def archive_download(keys: list[str], dest: str | Path, workers: int = 16) -> list[Path]:
@@ -404,6 +405,9 @@ def fetch_archive(
     dest: str | Path,
     quote: str = "USDT",
     workers: int = 16,
+    interval: str = "1d",
+    ranges: dict[str, tuple[str, str]] | None = None,
+    fields: tuple[str, ...] = ("price", "volume", "taker", "open", "high", "low"),
 ) -> pd.DataFrame:
     """Daily data for ``pairs`` from the archive, cached under ``dest``.
 
@@ -411,16 +415,19 @@ def fetch_archive(
     fetch_binance's, with the bar's open, high and low added to price, volume
     and taker. For 'funding' it is a dates x symbols frame of daily sums.
     Symbols keep the archive's base names, so the perp '1000SHIBUSDT' becomes
-    '1000SHIB'. A rerun only downloads files that are new.
+    '1000SHIB'. A rerun only downloads files that are new. ``interval='1h'``
+    gives hourly bars; ``ranges`` can give some pairs their own (start, end);
+    ``fields`` picks which kline fields to keep.
     """
     start_ts, end_ts = pd.Timestamp(start), pd.Timestamp(end)
+    span = {p: tuple(pd.Timestamp(x) for x in (ranges or {}).get(p, (start_ts, end_ts))) for p in pairs}
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        monthly = dict(zip(pairs, ex.map(lambda p: archive_months(market, p), pairs)))
+        monthly = dict(zip(pairs, ex.map(lambda p: archive_months(market, p, interval), pairs)))
     months = [max(m) for m in monthly.values() if m]
     if not months:
         raise RuntimeError(f"archive has no {market} files for these pairs")
     latest = max(months)
-    keys = {p: archive_keys(market, monthly[p], p, start_ts, end_ts, latest) for p in pairs}
+    keys = {p: archive_keys(market, monthly[p], p, span[p][0], span[p][1], latest, interval) for p in pairs}
     archive_download([k for ks in keys.values() for k in ks], dest, workers=workers)
 
     dest = Path(dest)
@@ -435,12 +442,13 @@ def fetch_archive(
             if s.notna().any():
                 out[base] = s
             continue
-        bars = read_archive_klines(paths).loc[start_ts:end_ts]
+        bars = read_archive_klines(paths).loc[span[pair][0]:span[pair][1] + pd.Timedelta(days=1) - pd.Timedelta(1)]
         if bars.empty:
             continue
         for field, col in [("price", "close"), ("volume", "quote_volume"), ("taker", "taker_quote"),
                            ("open", "open"), ("high", "high"), ("low", "low")]:
-            out[(base, field)] = bars[col]
+            if field in fields:
+                out[(base, field)] = bars[col]
     if not out:
         raise RuntimeError(f"archive returned no {market} data")
     df = pd.DataFrame(out).sort_index()

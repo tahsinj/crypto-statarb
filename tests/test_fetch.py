@@ -222,6 +222,9 @@ def test_archive_keys_daily_files_only_for_live_pairs():
                               pd.Timestamp("2026-09-03"), latest)
     assert keys[:2] == ["x/BTCUSDT-1d-2026-07.zip", "x/BTCUSDT-1d-2026-08.zip"]
     assert keys[2:] == [f"data/spot/daily/klines/BTCUSDT/1d/BTCUSDT-1d-2026-09-0{d}.zip" for d in (1, 2, 3)]
+    hourly = fetch.archive_keys("spot", months, "BTCUSDT", pd.Timestamp("2026-08-01"),
+                                pd.Timestamp("2026-09-01"), latest, interval="1h")
+    assert hourly[-1] == "data/spot/daily/klines/BTCUSDT/1h/BTCUSDT-1h-2026-09-01.zip"
     dead = {pd.Period("2022-05", "M"): "x/LUNAUSDT-1d-2022-05.zip"}
     assert fetch.archive_keys("spot", dead, "LUNAUSDT", pd.Timestamp("2022-01-01"),
                               pd.Timestamp("2026-09-03"), latest) == ["x/LUNAUSDT-1d-2022-05.zip"]
