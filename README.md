@@ -82,6 +82,28 @@ should not have been selected. Notebook 07 re-scores the same frozen book with
 the trades charged: lockbox Sharpe 1.49 (walk-forward) and 1.16 (equal
 weight), deflated Sharpe 0.21. The conclusion stays the same.
 
+**Forward test.** Notebook 08 runs the frozen book, unchanged, on the 82 days
+after the data ends (2026-07-07 to 2026-09-26):
+
+| | Return over the 82 days | Sharpe | Beta BTC |
+|---|---:|---:|---:|
+| Book, walk-forward | -5.9% | -1.01 | -0.12 |
+| Book, equal weight | +5.1% | +0.63 | -0.20 |
+| Seasonality | +2.6% | +1.17 | +0.07 |
+| Orderflow | -10.8% | -2.56 | -0.12 |
+| Carry | +11.3% | +0.90 | -0.55 |
+| BTC | +31.8% | +3.25 | |
+
+The walk-forward book lost money. Orderflow, most of its weight, had a bad
+run (about one 82-day stretch in twenty since 2020 was worse), and a beta of
+-0.12 during BTC's rally accounts for about two thirds of the loss. All of
+Carry's gain came from DEXE, which fell 82.5% in a day; its funding went so
+negative that Carry's weights, which have no cap per coin, put half the sleeve
+into it. An 82-day Sharpe has a standard error of about 2, so this neither
+confirms nor overturns the lockbox, but it shows that one coin can take over
+the carry sleeve. The book stays as frozen, since a cap chosen now would be
+fitted to this window (report section 6).
+
 ## What worked and what didn't
 
 - Baseline time-series momentum decayed: Sharpe +1.65 on dev, +0.43 on the
@@ -90,9 +112,11 @@ weight), deflated Sharpe 0.21. The conclusion stays the same.
   +1.79, gate +1.24) but lost money on the lockbox (-0.56), and with correct
   costs it would not have passed selection (above).
 - Following the 10-day taker-buy imbalance held up best: dev +0.89, gate
-  +2.12, lockbox +1.95. Every reversal variant built on order flow lost on dev.
+  +2.12, lockbox +1.95, then -10.8% over the forward test. Every reversal
+  variant built on order flow lost on dev.
 - Shorting high-funding perps against low-funding ones: dev +1.01, gate
-  +2.19, lockbox +0.88. On dev, 63% of its P&L is funding income.
+  +2.19, lockbox +0.88. On dev, 63% of its P&L is funding income. Its forward
+  gain came from a single coin.
 - Hourly cross-sectional reversal has a real gross edge (gross Sharpe +4.83 at
   a 4-hour lookback), but hourly trading costs 461% a year against a 272%
   gross return. No hourly config passed.
@@ -124,6 +148,7 @@ notebooks/
   05_fastrev              hourly cross-sectional reversal
   06_portfolio            the combined book and the one lockbox run
   07_posthoc              checks added after the lockbox, whole-sample figures
+  08_forward              the frozen book on data after the freeze
 alphas/                   the three sleeves as twsq alphas, with backtest CSVs
 tests/                    look-ahead, neutrality, cost and fetch tests
 reports/
@@ -144,7 +169,7 @@ uv pip install --python .venv -r requirements.txt
 for f in tests/test_*.py; do .venv/bin/python "$f"; done
 
 # notebooks, in order
-for nb in 00_data 01_baselines 02_seasonality 03_orderflow 04_carry 05_fastrev 06_portfolio 07_posthoc; do
+for nb in 00_data 01_baselines 02_seasonality 03_orderflow 04_carry 05_fastrev 06_portfolio 07_posthoc 08_forward; do
   .venv/bin/jupytext --to notebook notebooks/$nb.py
   .venv/bin/jupyter nbconvert --to notebook --execute --inplace notebooks/$nb.ipynb
 done
@@ -160,6 +185,9 @@ Things to know before rerunning:
   `END` in notebook 00 pins the sample to that date, but a new fetch picks the
   top 150 pairs by volume on the day it runs, so the universe, and the
   numbers, can differ a little.
+- Notebook 08 downloads 2026-05-01 to 2026-09-26 for the same coins (the dates
+  are pinned) and caches it under `data/raw/forward_*`. It checks the overlap
+  with the cached data before using anything new.
 - The trial registry (`data/processed/trial_registry.csv`) skips configs it
   already holds, so rerunning a notebook does not add trials. Notebook 06
   expects exactly 48 research rows.
@@ -174,5 +202,6 @@ The report lists them in full. The main ones: the universe comes from coins
 Binance still listed in 2026, so earlier delistings are missing (the hourly
 and funding panels, picked by volume at fetch time, lean further toward
 survivors); everything is Binance-only; the carry backtest adds funding to
-spot returns and ignores the perp basis; Orderflow and Carry assume their
-limit orders always fill; and a one-year lockbox is short.
+spot returns and ignores the perp basis; Carry's weights have no cap per coin;
+Orderflow and Carry assume their limit orders always fill; and a one-year
+lockbox and an 82-day forward test are short.
