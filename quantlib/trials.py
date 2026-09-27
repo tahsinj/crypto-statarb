@@ -2,7 +2,9 @@
 
 The deflated Sharpe in notebook 06 needs the number of configurations tried,
 including the ones that were dropped, so every research notebook calls
-log_trial for each config it backtests.
+log_trial for each config it backtests. A config that is already in the
+registry is not added again, so rerunning a notebook does not inflate the
+count.
 """
 from __future__ import annotations
 
@@ -22,14 +24,20 @@ def log_trial(
     dev_sharpe: float,
     gate_sharpe: float | None = None,
     note: str = "",
-) -> None:
+) -> bool:
+    """Append one tested config; returns False if it was already logged."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    cfg = json.dumps(config, sort_keys=True)
+    if path.exists():
+        reg = pd.read_csv(path)
+        if ((reg["family"] == family) & (reg["config"] == cfg)).any():
+            return False
     row = pd.DataFrame(
         [[
             datetime.now(timezone.utc).isoformat(timespec="seconds"),
             family,
-            json.dumps(config, sort_keys=True),
+            cfg,
             dev_sharpe,
             gate_sharpe,
             note,
@@ -37,6 +45,7 @@ def log_trial(
         columns=COLUMNS,
     )
     row.to_csv(path, mode="a", header=not path.exists(), index=False)
+    return True
 
 
 def load_registry(path: str | Path) -> pd.DataFrame:

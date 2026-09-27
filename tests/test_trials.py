@@ -23,6 +23,17 @@ def test_log_and_count():
         assert df["gate_sharpe"].iloc[1] == 0.2
 
 
+def test_same_config_is_not_logged_twice():
+    # Rerunning a notebook must not add trials: same family and config -> skipped.
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "reg.csv"
+        assert trials.log_trial(p, "carry", {"probe": "P1", "smooth": 7}, 1.0, 2.0)
+        assert not trials.log_trial(p, "carry", {"smooth": 7, "probe": "P1"}, 1.0, 2.0)
+        assert trials.log_trial(p, "carry", {"probe": "P1", "smooth": 30}, 0.3, 0.7)
+        assert trials.log_trial(p, "orderflow", {"probe": "P1", "smooth": 7}, 0.1, 0.2)
+        assert trials.n_trials(p) == 3
+
+
 def test_load_missing_is_empty():
     with tempfile.TemporaryDirectory() as td:
         df = trials.load_registry(Path(td) / "nope.csv")
@@ -30,6 +41,6 @@ def test_load_missing_is_empty():
 
 
 if __name__ == "__main__":
-    for fn in [test_log_and_count, test_load_missing_is_empty]:
+    for fn in [test_log_and_count, test_same_config_is_not_logged_twice, test_load_missing_is_empty]:
         fn()
         print(f"ok {fn.__name__}")
