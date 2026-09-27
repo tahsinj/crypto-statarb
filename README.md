@@ -19,9 +19,11 @@ the full research trail, including the ideas that failed.
 - Weights set at the close of day t earn day t+1's return, and every trade is
   charged: 20 bps for the momentum sleeves (market orders), 7 bps for the
   others (limit orders).
-- Parameters were chosen on a development window (2020-01 to 2024-07) and
-  checked on a gate window (2024-08 to 2025-06). The lockbox year (2025-07 to
-  2026-07) was run once, in notebook 06, after every choice had been made.
+- The history is split in time, roughly 70/15/15, the usual train, validation
+  and test split. Parameters were chosen on a development window (2020-01 to
+  2024-07) and checked on a gate window (2024-08 to 2025-06). The lockbox year
+  (2025-07 to 2026-07) was run once, in notebook 06, after every choice had
+  been made.
 - All 48 configurations tried are in a trial registry, and the deflated Sharpe
   ratio accounts for that many tries.
 
@@ -31,6 +33,22 @@ The book combines three sleeves: momentum with weekday exposure halved
 (Seasonality), a 10-day taker-imbalance follower (Orderflow) and a funding
 carry trade (Carry). The main version uses walk-forward mean-variance weights;
 an equal-weight version runs alongside.
+
+Over the whole sample, 2020-01 to 2026-07:
+
+| | Ann. return | Ann. vol | Sharpe | Max DD | Beta BTC | Alpha (t) |
+|---|---:|---:|---:|---:|---:|---:|
+| Book, equal weight | 25.6% | 13.4% | 1.76 | -10.1% | -0.02 | 23.6% (4.4) |
+| Book, walk-forward (from 2021-10) | 8.1% | 7.9% | 1.02 | -8.1% | -0.01 | 8.3% (2.3) |
+| Seasonality | 13.6% | 9.6% | 1.37 | -11.5% | -0.01 | 14.5% (3.8) |
+| Orderflow | 21.5% | 21.3% | 1.02 | -29.6% | +0.02 | 19.6% (2.4) |
+| Carry | 36.6% | 31.3% | 1.15 | -35.6% | -0.08 | 36.6% (2.9) |
+| Baseline momentum | 18.4% | 15.5% | 1.17 | -19.6% | -0.02 | 20.2% (3.2) |
+| Baseline pairs | -8.0% | 20.2% | -0.31 | -55.9% | -0.04 | -5.4% (-0.7) |
+| BTC | 39.3% | 60.8% | 0.86 | -76.6% | | |
+
+These mix the windows the strategies were chosen on with the windows they were
+tested on. Split by window, the book looks like this:
 
 | | Dev | Gate | Lockbox |
 |---|---:|---:|---:|
@@ -48,6 +66,13 @@ t = 1.25) and a block-bootstrap 95% interval for its Sharpe of [-0.42, 3.44].
 The deflated Sharpe is 0.49 on the full sample and 0.20 on the lockbox, far
 below the usual 0.95. The book made money with almost no market exposure, but
 the evidence is not strong enough to call it proven.
+
+Two notes on the alphas. For the momentum-based sleeves most of the alpha is
+market timing: trend following flips between long and short, so its average
+beta is near zero, and a regression that allows for the timing leaves almost
+no alpha (report section 2). And alpha scales with volatility: Carry runs at
+about 31% volatility, so its alphas look large; at 10% volatility its lockbox
+alpha would be about 8% (report section 4).
 
 **Correction found in an audit after the lockbox.** The Seasonality backtest
 scaled each day's return by 0.5 or 1.0 but never charged for the trades that
@@ -98,7 +123,7 @@ notebooks/
   04_carry                funding carry and crowding
   05_fastrev              hourly cross-sectional reversal
   06_portfolio            the combined book and the one lockbox run
-  07_posthoc              checks added after the lockbox (costs, carry P&L split)
+  07_posthoc              checks added after the lockbox, whole-sample figures
 alphas/                   the three sleeves as twsq alphas, with backtest CSVs
 tests/                    look-ahead, neutrality, cost and fetch tests
 reports/
@@ -135,8 +160,9 @@ Things to know before rerunning:
   `END` in notebook 00 pins the sample to that date, but a new fetch picks the
   top 150 pairs by volume on the day it runs, so the universe, and the
   numbers, can differ a little.
-- Notebooks 01 to 05 append to `data/processed/trial_registry.csv`. Delete it
-  before a full rerun; notebook 06 expects exactly 48 research rows.
+- The trial registry (`data/processed/trial_registry.csv`) skips configs it
+  already holds, so rerunning a notebook does not add trials. Notebook 06
+  expects exactly 48 research rows.
 - The twsq alphas run in a separate environment; see `alphas/README.md`.
 
 The notebooks are stored as paired `.py` files (jupytext) for readable diffs;
