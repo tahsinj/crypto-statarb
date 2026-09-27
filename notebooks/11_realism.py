@@ -36,10 +36,10 @@
 # 4. Orderflow and Carry trading with limit orders that fill only when the
 #    next day's price trades through them.
 #
-# Then three checks that stand on their own: where Orderflow's edge sits by
-# coin size and how much money it could take, the pairs baseline with its
-# rebalance trades charged, and the frozen book's whole out-of-sample record
-# so far.
+# Then four checks that stand on their own: where Orderflow's edge sits by
+# coin size and how much money it could take, notebook 05's hourly
+# fast-reversal test on every pair, the pairs baseline with its rebalance
+# trades charged, and the frozen book's whole out-of-sample record so far.
 
 # +
 from pathlib import Path
@@ -49,7 +49,7 @@ import pandas as pd
 
 import sys
 sys.path.insert(0, str(Path.cwd().parent if Path.cwd().name == "notebooks" else Path.cwd()))
-from quantlib import backtest, data, metrics, pairs, robustness, strategies
+from quantlib import backtest, data, metrics, pairs, robustness, signals, strategies
 
 ROOT = Path.cwd().parent if Path.cwd().name == "notebooks" else Path.cwd()
 PROC = ROOT / "data" / "processed"
@@ -285,6 +285,59 @@ capacity = pd.DataFrame(cap).T
 capacity.round(2)
 # -
 
+# ## Fast reversal on every pair
+#
+# Notebook 05's grid again: hourly cross-sectional reversal, lookback 4 to
+# 48 hours, rebalanced every 1 or 6 hours, 7 bps, a coin tradable in an hour
+# if it was in the daily top-100 universe that day, dev from 2020-06 and the
+# gate, and the rule that gross return must be at least 3 times the cost
+# drag. First on the research panel of 60 coins, which must reproduce
+# notebook 05, then on hourly bars for every coin that was in the every-pair
+# universe (notebook 09).
+
+# +
+PPY = 24 * 365
+DEV_H = slice("2020-06-01", "2024-07-31")
+
+
+def fast_grid(price_h: pd.DataFrame, uni_daily: pd.DataFrame) -> pd.DataFrame:
+    """Notebook 05's eight configs on an hourly panel; no trials are logged."""
+    price_h = price_h.loc["2020-06-01":"2025-06-30"]
+    rets_h = price_h.pct_change()
+    uni_h = (uni_daily.loc[:"2025-06-30"].reindex(columns=price_h.columns)
+             .reindex(price_h.index, method="ffill").fillna(False))
+    rows = {}
+    for lb in [4, 12, 24, 48]:
+        for rb in [1, 6]:
+            sig = -signals.cross_sectional_zscore(signals.trailing_return(price_h, lb), uni_h)
+            w = signals.signal_to_weights(sig, uni_h, long_short=True)
+            if rb > 1:
+                w = w.where(pd.Series(np.arange(len(w)) % rb == 0, index=w.index)).ffill()
+            res = backtest.run(w, rets_h, cost_bps=7)
+            gross_dev = res.gross_returns.loc[DEV_H]
+            gross_ann, drag_ann = gross_dev.mean() * PPY, res.turnover.mean() * 7 / 1e4 * PPY
+            rows[(lb, rb)] = {"names per hour": uni_h.sum(axis=1).loc[DEV_H].mean(),
+                              "gross_sharpe_dev": metrics.sharpe(gross_dev, periods_per_year=PPY),
+                              "gross_ann": gross_ann, "cost_drag_ann": drag_ann,
+                              "gross_over_drag": gross_ann / drag_ann,
+                              "net_dev": metrics.sharpe(res.net_returns.loc[DEV_H], periods_per_year=PPY),
+                              "net_gate": metrics.sharpe(res.net_returns.loc[WINDOWS["gate"]], periods_per_year=PPY)}
+    out = pd.DataFrame(rows).T
+    out.index.names = ["lookback_h", "rebal_h"]
+    return out
+
+
+fast = pd.concat({"research panel": fast_grid(pd.read_parquet(PROC / "price_1h.parquet"),
+                                              pd.read_parquet(PROC / "universe.parquet")),
+                  "every pair": fast_grid(pd.read_parquet(ALL / "price_1h.parquet"), uni2)})
+fast.round(2)
+# -
+
+# The 60-coin panel reproduces notebook 05. On every pair, with about three
+# times as many coins in a typical hour, the gross edge is larger, about as
+# large as the trading cost at the best settings, but nowhere near three
+# times it, and every config still loses money after costs on dev and gate.
+
 # ## The pairs baseline with its rebalance trades charged
 #
 # The pairs engine does not charge for positions a pair already has when it
@@ -363,7 +416,9 @@ pd.DataFrame(beta_rows).T.round(3)
 # falls from 0.44 to 0.09. Even on the research list, most of Orderflow's
 # edge is gone at $1M under the square-root impact model (0.30 or -0.27,
 # depending on the impact coefficient, from 0.87 with none); Carry lasts to
-# somewhere between $1M and $10M. Charging the pairs baseline for its
+# somewhere between $1M and $10M. Notebook 05's hourly reversal, rerun on
+# every pair, has a larger gross edge than on its 60 coins but still loses
+# money after costs in every config. Charging the pairs baseline for its
 # rebalance trades barely moves it.
 #
 # Put together, the lockbox year and the forward test give the frozen book,
@@ -388,5 +443,6 @@ pd.DataFrame({"as run": base, "charged": pairs_charged}).to_parquet(PROC / "real
 record.rename_axis("book").to_csv(PROC / "realism_oos.csv")
 pd.DataFrame(fills).T.rename_axis("sleeve").to_csv(PROC / "realism_fills.csv")
 pd.DataFrame(beta_rows).T.rename_axis("series").to_csv(PROC / "realism_beta.csv")
+fast.rename_axis(["panel", "lookback_h", "rebal_h"]).to_csv(PROC / "realism_fastrev.csv")
 print("saved")
 # -
