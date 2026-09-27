@@ -190,11 +190,12 @@ carry4 = ca4.net_returns - (held_ca * fund2).sum(axis=1).reindex(ca4.net_returns
 s4 = s3.assign(orderflow=of4.net_returns.reindex(s3.index), carry=carry4.reindex(s3.index))
 step[4] = pd.concat([s4, book(s4)], axis=1)
 
+fills = {}
 for name, w, held in [("orderflow", w_of, held_of), ("carry", w_ca, held_ca)]:
     ordered = (w.reindex_like(held).fillna(0.0).shift(1) - held.shift(1)).abs().sum(axis=1)
     done = held.diff().abs().sum(axis=1)
-    sl = WINDOWS["dev"]
-    print(f"{name}: share of the ordered notional that filled, dev: {done.loc[sl].sum() / ordered.loc[sl].sum():.1%}")
+    fills[name] = {k: done.loc[sl].sum() / ordered.loc[sl].sum() for k, sl in WINDOWS.items()}
+    print(f"{name}: share of the ordered notional that filled, dev: {fills[name]['dev']:.1%}")
 # -
 
 # ## The steps side by side (Sharpe)
@@ -356,5 +357,7 @@ pd.DataFrame(size).to_parquet(PROC / "realism_size.parquet")
 capacity.rename_axis(["sleeve", "aum"]).to_csv(PROC / "realism_capacity.csv")
 pd.DataFrame({"as run": base, "charged": pairs_charged}).to_parquet(PROC / "realism_pairs.parquet")
 record.rename_axis("book").to_csv(PROC / "realism_oos.csv")
+pd.DataFrame(fills).T.rename_axis("sleeve").to_csv(PROC / "realism_fills.csv")
+pd.DataFrame(beta_rows).T.rename_axis("series").to_csv(PROC / "realism_beta.csv")
 print("saved")
 # -
