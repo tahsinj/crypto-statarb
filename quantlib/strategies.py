@@ -121,11 +121,39 @@ def orderflow_sleeve(
     is skipped. Dollar-neutral long/short, 7 bps by default. Notebook 06
     compares the output with sleeve_orderflow.parquet.
     """
+    w = orderflow_weights(taker_imbalance, universe, smooth)
+    return backtest.run(w, returns, cost_bps).net_returns.rename("orderflow")
+
+
+def orderflow_weights(taker_imbalance: pd.DataFrame, universe: pd.DataFrame, smooth: int = 10) -> pd.DataFrame:
+    """Orderflow target weights: long the names with the highest recent buy share."""
     imb_c = taker_imbalance - 0.5
     raw = imb_c.rolling(smooth).mean() if smooth > 1 else imb_c
     sig = signals.cross_sectional_zscore(raw, universe)
-    w = signals.signal_to_weights(sig, universe, long_short=True)
-    return backtest.run(w, returns, cost_bps).net_returns.rename("orderflow")
+    return signals.signal_to_weights(sig, universe, long_short=True)
+
+
+def carry_weights(
+    funding: pd.DataFrame,
+    universe: pd.DataFrame,
+    smooth: int = 7,
+    weighting: str = "zscore",
+) -> pd.DataFrame:
+    """Carry target weights: short high funding, long low funding.
+
+    weighting='zscore' is the frozen research rule. weighting='rank' uses the
+    cross-sectional rank instead, so no single coin can take more than a few
+    percent of the book (v2).
+    """
+    fuv = universe & funding.notna()
+    smooth_fund = funding.rolling(smooth).mean()
+    if weighting == "zscore":
+        sig = -signals.cross_sectional_zscore(smooth_fund, fuv)
+    elif weighting == "rank":
+        sig = -signals.cross_sectional_rank(smooth_fund, fuv)
+    else:
+        raise ValueError(f"unknown weighting {weighting!r}")
+    return signals.signal_to_weights(sig, fuv, long_short=True)
 
 
 def carry_sleeve(
@@ -134,6 +162,7 @@ def carry_sleeve(
     universe: pd.DataFrame,
     smooth: int = 7,
     cost_bps: float = 7.0,
+    weighting: str = "zscore",
 ) -> pd.Series:
     """Short high funding, long low funding (notebook 04 selection, P1 k=7).
 
@@ -142,13 +171,49 @@ def carry_sleeve(
     is only in the signal: the funding P&L uses the actual daily funding,
     because that is what a perp position pays or receives. Dollar-neutral
     long/short, 7 bps by default. Notebook 06 compares the output with
-    sleeve_carry.parquet.
+    sleeve_carry.parquet. ``returns`` can be spot or perp returns; the research
+    used spot. weighting='rank' is the v2 rule (see carry_weights).
     """
-    fuv = universe & funding.notna()
-    smooth_fund = funding.rolling(smooth).mean()
-    sig = -signals.cross_sectional_zscore(smooth_fund, fuv)
-    w = signals.signal_to_weights(sig, fuv, long_short=True)
+    w = carry_weights(funding, universe, smooth, weighting)
     res = backtest.run(w, returns, cost_bps)
     fund_pnl = -(w.shift(1) * funding).sum(axis=1)
     net = res.net_returns + fund_pnl
     return net.rename("carry")
+
+
+# ---------------------------------------------------------------------------
+# Version 2, registered on 2026-09-27 before any v2 result was computed
+# ---------------------------------------------------------------------------
+# Changes from the frozen book, each for a reason found before the lockbox or
+# in the data audit, none chosen by performance:
+#   - Seasonality is dropped: charged for its resizing trades it fails
+#     notebook 02's own dev/gate rule (notebook 07).
+#   - Carry weights by rank, not z-score: z-scores let one coin take a whole
+#     side of the sleeve (SOL in November 2022 on dev).
+#   - Carry is measured on perp prices, which is what the trade holds.
+#   - The universe comes from every Binance pair, delisted ones included, with
+#     pegged assets and tokenized stocks out and JUP/SYRUP back in (notebook 09).
+#   - The two sleeves are combined with equal weights, which beat the
+#     walk-forward weights on both dev and gate.
+# The test is the data from V2_START on (notebook 12).
+
+V2_START = "2026-09-28"
+
+
+def v2_sleeves(
+    taker_imbalance: pd.DataFrame,
+    returns: pd.DataFrame,
+    perp_returns: pd.DataFrame,
+    funding: pd.DataFrame,
+    universe: pd.DataFrame,
+    cost_bps: float = 7.0,
+) -> pd.DataFrame:
+    """The two v2 sleeves: Orderflow (unchanged rule) and rank-weighted Carry on perp prices."""
+    of = orderflow_sleeve(taker_imbalance, returns, universe, cost_bps=cost_bps)
+    ca = carry_sleeve(funding, perp_returns, universe, cost_bps=cost_bps, weighting="rank")
+    return pd.concat([of, ca], axis=1)
+
+
+def v2_book(sleeves: pd.DataFrame) -> pd.Series:
+    """Equal weight of the v2 sleeves, rebalanced daily."""
+    return sleeves.dropna().mean(axis=1).rename("v2")

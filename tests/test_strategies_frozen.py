@@ -81,11 +81,44 @@ def test_carry_sleeve_receives_funding_on_shorts():
     assert s.dropna().mean() > 0, "carry sleeve should collect funding on shorts"
 
 
+
+
+def test_rank_weights_keep_one_coin_from_taking_a_side():
+    """One coin with extreme funding takes the whole long side under z-scores, not under ranks."""
+    idx = pd.date_range("2022-01-01", periods=30)
+    cols = [f"C{i}" for i in range(40)]
+    fund = pd.DataFrame(np.tile(np.linspace(0, 1e-3, 40), (30, 1)), index=idx, columns=cols)
+    fund["C0"] = -0.2                                      # the crash coin: shorts pay 20% a day
+    uni = pd.DataFrame(True, index=idx, columns=cols)
+    wz = strategies.carry_weights(fund, uni, weighting="zscore").iloc[-1]
+    wr = strategies.carry_weights(fund, uni, weighting="rank").iloc[-1]
+    assert wz["C0"] > 0.45 and wr["C0"] < 0.05
+    assert np.isclose(wr.abs().sum(), 1.0) and abs(wr.sum()) < 1e-12
+
+
+def test_carry_default_is_the_frozen_zscore_rule():
+    price, rets, uni, _, fund = _toy()
+    a = strategies.carry_sleeve(fund, rets, uni)
+    b = strategies.carry_sleeve(fund, rets, uni, weighting="zscore")
+    assert np.array_equal(a.to_numpy(), b.to_numpy(), equal_nan=True)
+
+
+def test_v2_book_is_the_mean_of_its_sleeves():
+    price, rets, uni, imb, fund = _toy()
+    sl = strategies.v2_sleeves(imb, rets, rets, fund, uni)
+    assert list(sl.columns) == ["orderflow", "carry"]
+    book = strategies.v2_book(sl)
+    assert np.allclose(book, sl.dropna().mean(axis=1)) and book.name == "v2"
+
+
 if __name__ == "__main__":
     for fn in [test_seasonal_momentum_is_scaled_momentum,
                test_charge_resizing_matches_frozen_at_zero_cost,
                test_charge_resizing_costs_more_when_the_book_is_resized,
                test_orderflow_sleeve_runs_and_named,
-               test_carry_sleeve_receives_funding_on_shorts]:
+               test_carry_sleeve_receives_funding_on_shorts,
+               test_rank_weights_keep_one_coin_from_taking_a_side,
+               test_carry_default_is_the_frozen_zscore_rule,
+               test_v2_book_is_the_mean_of_its_sleeves]:
         fn()
         print(f"ok {fn.__name__}")
