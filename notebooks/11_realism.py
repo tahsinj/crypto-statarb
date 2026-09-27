@@ -102,13 +102,23 @@ step = {0: pd.concat([pd.concat([research[SLEEVES], cp[["walk_forward", "equal_w
 
 
 # +
+FUNDING_START = research["carry"].first_valid_index()   # the research Carry starts with its funding data
+
+
+def from_funding_start(carry: pd.Series) -> pd.Series:
+    """Blank before funding data exists, as in the research, so the walk-forward
+    book starts on the same day and refits on the same dates."""
+    return carry.where(carry.index >= FUNDING_START)
+
+
 def frozen_sleeves(p: dict, universe: pd.DataFrame, funding: pd.DataFrame, carry_returns=None) -> pd.DataFrame:
     """The three frozen sleeves on a set of panels."""
     return pd.DataFrame({
         "seasonality": strategies.seasonal_momentum_sleeve(p["price"], p["returns"], universe),
         "orderflow": strategies.orderflow_sleeve(p["taker_imbalance"], p["returns"], universe),
-        "carry": strategies.carry_sleeve(funding.reindex(columns=universe.columns),
-                                         p["returns"] if carry_returns is None else carry_returns, universe),
+        "carry": from_funding_start(strategies.carry_sleeve(
+            funding.reindex(columns=universe.columns),
+            p["returns"] if carry_returns is None else carry_returns, universe)),
     })
 
 
@@ -168,7 +178,7 @@ pd.DataFrame(gate_rows).T
 # ## Step 3: Carry on perp prices
 
 perp_returns = A["perp_returns"].reindex(columns=uni2.columns)
-s3 = s2.assign(carry=strategies.carry_sleeve(fund2, perp_returns, uni2))
+s3 = s2.assign(carry=from_funding_start(strategies.carry_sleeve(fund2, perp_returns, uni2)))
 step[3] = pd.concat([s3, book(s3)], axis=1)
 
 # ## Step 4: limit orders that have to be filled
@@ -186,7 +196,7 @@ w_ca = strategies.carry_weights(fund2, uni2)
 perp_px, perp_hi, perp_lo = (A[k].reindex(columns=uni2.columns) for k in ["perp_price", "perp_high", "perp_low"])
 ca4, held_ca = backtest.run_limit_fills(w_ca, perp_returns, perp_px, perp_hi, perp_lo, cost_bps=7.0)
 carry4 = ca4.net_returns - (held_ca * fund2).sum(axis=1).reindex(ca4.net_returns.index)
-s4 = s3.assign(orderflow=of4.net_returns.reindex(s3.index), carry=carry4.reindex(s3.index))
+s4 = s3.assign(orderflow=of4.net_returns.reindex(s3.index), carry=from_funding_start(carry4.reindex(s3.index)))
 step[4] = pd.concat([s4, book(s4)], axis=1)
 
 fills = {}
@@ -334,7 +344,7 @@ pd.DataFrame(beta_rows).T.round(3)
 # assets costs the walk-forward book a little, 1.46 to 1.26 on the lockbox.
 #
 # The coin list is. On every pair (step 2), the frozen book's lockbox Sharpe
-# is 0.16 walk-forward and -0.62 equal weight. Orderflow and Carry both lose
+# is 0.36 walk-forward and -0.62 equal weight. Orderflow and Carry both lose
 # money on the gate and the lockbox; Seasonality keeps its dev and gate
 # numbers and still loses on the lockbox. The research list was picked by
 # volume in July 2026, and 46% of the universe's coin-days before then
