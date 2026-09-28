@@ -47,6 +47,25 @@ WRAPPED = {"WBTC", "WETH", "WBETH", "BETH", "STETH", "WEETH"}
 LEVERAGED_SUFFIXES = ("UP", "DOWN", "BULL", "BEAR")
 # Perp names that differ from the spot ticker by more than a size prefix.
 PERP_ALIASES = {"LUNA2": "LUNA"}
+# The research coin list: the 149 of the top 150 USDT pairs by 24h volume on
+# 2026-07-06 that returned data, as cached in data/raw/binance_1d.pkl.zip.
+# Notebook 00 fetches these by name, so a refetch asks for the same coins.
+RESEARCH_COINS = (
+    "AAVE", "ACE", "ADA", "AIGENSYN", "AIXBT", "ALGO", "ALICE", "ALLO", "APT", "AR", "ARB",
+    "ARPA", "ASTER", "ATM", "ATOM", "AVAX", "BCH", "BEL", "BERA", "BIO", "BNB", "BONK",
+    "BTC", "CAKE", "CELO", "CHZ", "CITY", "COCOS", "CRCLB", "CRV", "D", "DASH", "DEXE",
+    "DOGE", "DOT", "DYDX", "EIGEN", "ENA", "EPIC", "ETC", "ETH", "ETHFI", "EUR", "FET",
+    "FIL", "FLOKI", "FTM", "G", "GAL", "GALA", "GIGGLE", "GMT", "GRAM", "HBAR", "HEI",
+    "HEMI", "HIGH", "HMSTR", "HOT", "ICP", "ID", "IMX", "INJ", "JST", "JTO", "KAITO",
+    "KITE", "KSM", "LDO", "LINK", "LRC", "LTC", "LUNC", "MANTRA", "MEGA", "MINA", "MIRA",
+    "MORPHO", "MOVR", "MSTRB", "MUB", "NEAR", "NEIRO", "NFP", "NOM", "OG", "OGN", "ONDO",
+    "OP", "OPN", "ORDI", "PAXG", "PENDLE", "PENGU", "PEPE", "PHB", "POL", "POLY", "PUMP",
+    "PYR", "PYTH", "RE", "RENDER", "RESOLV", "RIF", "RLUSD", "RNDR", "RUNE", "S", "SCRT",
+    "SEI", "SENT", "SHIB", "SKY", "SNDKB", "SOL", "SPCXB", "STRK", "SUI", "SUN", "SYN",
+    "TAO", "TIA", "TLM", "TON", "TRB", "TRUMP", "TRX", "TST", "U", "UNI", "USD1", "UTK",
+    "VANRY", "VIRTUAL", "W", "WIF", "WLD", "WLFI", "XAUT", "XLM", "XPL", "XRP", "XTZ",
+    "YFI", "ZAMA", "ZEC", "ZK", "ZRO",
+)
 
 
 def is_leveraged_token(base: str, bases: set[str]) -> bool:

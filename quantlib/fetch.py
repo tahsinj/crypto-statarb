@@ -6,9 +6,9 @@ Kraken or Binance). This module uses Binance's public REST endpoints:
 - ``fetch_binance``: spot klines, daily or hourly. Keeps the close, the USD
   quote volume and the taker-buy quote volume. Standard library only.
 - ``fetch_funding``: USDT-margined perpetual funding rates, summed per UTC day.
-- ``fetch_archive``: the same daily data from Binance's public data archive,
-  which also holds pairs that have since been delisted. Notebook 09 uses it to
-  rebuild the universe without survivorship.
+- ``fetch_archive``: the same daily (or hourly) data from Binance's public data
+  archive, which also holds pairs that have since been delisted. Notebook 09
+  uses it to rebuild the universe without survivorship.
 - ``fetch_yahoo``: a yfinance fallback for daily bars. No taker volume, patchier
   volume data and heavy rate limiting, so it is not used for the research.
 
@@ -41,8 +41,11 @@ from .data import STABLECOINS, WRAPPED
 BINANCE_BASE = "https://api.binance.com"
 FAPI_BASE = "https://fapi.binance.com"
 _INTERVAL_MS = {"1d": 86_400_000, "1h": 3_600_000}
-# Leveraged tokens and wrapped/pegged assets are not real spot exposures and
-# would pollute a momentum/reversal universe; drop them alongside stablecoins.
+# Leveraged tokens and wrapped coins (WBTC and the like) are not real spot
+# exposures and would pollute a momentum/reversal universe; top_usdt_pairs
+# drops them alongside stablecoins. This is the filter the research coin list
+# was built with: it checks the suffix alone, so it also dropped JUP and SYRUP,
+# and it lets through the pegged assets in data.PEGGED (see data.py).
 _LEVERAGED_SUFFIXES = ("UP", "DOWN", "BULL", "BEAR")
 _WRAPPED = WRAPPED
 

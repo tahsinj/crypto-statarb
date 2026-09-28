@@ -5,9 +5,12 @@ cross-sectional score (higher = more attractive to be long); signal_to_weights
 turns one into weights and is the only place dollar-neutrality and leverage
 normalisation happen.
 
-Nothing here shifts in time. The look-ahead-free contract is enforced once, in
+Signals are not lagged here. The look-ahead-free contract is enforced once, in
 backtest.run, which lags weights before applying returns. Signals are "as of
-close t" using data through t.
+close t" using data through t. The rolling statistics meant as conditioners
+(ewm_vol, realized_vol, cross_sectional_dispersion, rolling_zscore) are the
+exception: by default they are shifted a day, so they only use data through
+t-1.
 """
 from __future__ import annotations
 

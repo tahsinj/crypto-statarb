@@ -189,6 +189,16 @@ def test_limit_fills_miss_buys_when_the_price_runs_away():
     assert res.gross_returns.sum() == 0.0                  # so the 10% up days are missed
 
 
+def test_fill_gap_starts_fills_only_the_first_missing_day():
+    idx = pd.date_range("2024-01-01", periods=7)
+    perp = pd.DataFrame({"A": [np.nan, 0.01, np.nan, np.nan, np.nan, 0.02, np.nan]}, index=idx)
+    spot = pd.DataFrame({"A": [0.5, 0.5, -0.3, -0.2, -0.1, 0.5, 0.4]}, index=idx)
+    out = backtest.fill_gap_starts(perp, spot)["A"]
+    # before listing stays empty; the first day of each gap gets the spot move; the rest stay empty
+    assert np.isnan(out.iloc[0]) and out.iloc[1] == 0.01 and out.iloc[2] == -0.3
+    assert out.iloc[3:5].isna().all() and out.iloc[5] == 0.02 and out.iloc[6] == 0.4
+
+
 def test_impact_grows_with_size_and_with_small_volume():
     p = _toy_panels()
     rets = p["returns"]
@@ -216,6 +226,25 @@ def test_pairs_edge_charges_open_and_close():
     _, to, _, edge = pairs._pair_stream(logp, rets, "a", "b", 1.0, seg, 2.0, 0.0, 30)
     assert edge.iloc[0] > 0.99 and edge.iloc[-1] > 0.99    # gross ~1 per open pair, each way
     assert edge.iloc[1:-1].eq(0).all() and to.sum() < 1e-9
+
+
+def test_pairs_lag_selection_picks_before_the_first_traded_day():
+    """By default the selector sees the rebalance date, whose return the segment then
+    books; lag_selection=True hands it the day before."""
+    from quantlib import pairs
+    p = _toy_panels()
+    universe = pd.DataFrame(True, index=p["returns"].index, columns=p["returns"].columns)
+    rebal = pd.date_range("2020-03-01", p["returns"].index[-1], freq="63D")
+    for lag, gap in [(False, 0), (True, 1)]:
+        seen = []
+
+        def spy(logp, returns, universe, asof, **kw):
+            seen.append(asof)
+            return []
+
+        pairs.backtest_pairs(p["price"], p["returns"], universe, start="2020-03-01",
+                             selector=spy, lag_selection=lag)
+        assert [(r - s).days for r, s in zip(rebal, seen)] == [gap] * len(rebal) and len(seen) == len(rebal)
 
 
 def test_universe_pointwise_no_lookahead():

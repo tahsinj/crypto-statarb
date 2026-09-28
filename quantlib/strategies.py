@@ -163,6 +163,7 @@ def carry_sleeve(
     smooth: int = 7,
     cost_bps: float = 7.0,
     weighting: str = "zscore",
+    fallback_returns: pd.DataFrame | None = None,
 ) -> pd.Series:
     """Short high funding, long low funding (notebook 04 selection, P1 k=7).
 
@@ -173,8 +174,19 @@ def carry_sleeve(
     long/short, 7 bps by default. Notebook 06 compares the output with
     sleeve_carry.parquet. ``returns`` can be spot or perp returns; the research
     used spot. weighting='rank' is the v2 rule (see carry_weights).
+
+    ``fallback_returns`` fills in a coin's return on the first day of each gap
+    in ``returns`` (backtest.fill_gap_starts). The every-pair perp panels drop a
+    contract's data on days it trades more than 20% away from spot, so a coin
+    the sleeve holds on such a day earns nothing, even on a crash day like
+    LUNA's in May 2022. Passing the spot returns gives it the coin's spot move
+    instead. On those panels the sleeve cannot hold a coin past that first
+    day, since the coin's funding is dropped on the same days. The default
+    leaves the gaps, as the first runs did.
     """
     w = carry_weights(funding, universe, smooth, weighting)
+    if fallback_returns is not None:
+        returns = backtest.fill_gap_starts(returns, fallback_returns)
     res = backtest.run(w, returns, cost_bps)
     fund_pnl = -(w.shift(1) * funding).sum(axis=1)
     net = res.net_returns + fund_pnl
@@ -199,6 +211,11 @@ def carry_sleeve(
 
 V2_START = "2026-09-28"
 
+# Added on 2026-09-27, after v2's first run and before its test started: the
+# measurement fix spot_fallback=True, which notebook 12 uses. It changes how
+# P&L is counted on the few days a held perp's data is dropped, not what the
+# sleeves trade.
+
 
 def v2_sleeves(
     taker_imbalance: pd.DataFrame,
@@ -207,10 +224,17 @@ def v2_sleeves(
     funding: pd.DataFrame,
     universe: pd.DataFrame,
     cost_bps: float = 7.0,
+    spot_fallback: bool = False,
 ) -> pd.DataFrame:
-    """The two v2 sleeves: Orderflow (unchanged rule) and rank-weighted Carry on perp prices."""
+    """The two v2 sleeves: Orderflow (unchanged rule) and rank-weighted Carry on perp prices.
+
+    spot_fallback=True gives Carry a held coin's spot move on the day its perp
+    data drops out (see carry_sleeve). The default is v2 as registered and
+    first run in notebook 10.
+    """
     of = orderflow_sleeve(taker_imbalance, returns, universe, cost_bps=cost_bps)
-    ca = carry_sleeve(funding, perp_returns, universe, cost_bps=cost_bps, weighting="rank")
+    ca = carry_sleeve(funding, perp_returns, universe, cost_bps=cost_bps, weighting="rank",
+                      fallback_returns=returns if spot_fallback else None)
     return pd.concat([of, ca], axis=1)
 
 

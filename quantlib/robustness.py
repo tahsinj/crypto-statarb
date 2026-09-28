@@ -1,7 +1,8 @@
 """Portfolio-level helpers that work on sleeve return series.
 
-walk_forward_weights builds the combined book in notebook 06. capacity_curve,
-regime_table and by_year are for follow-up checks.
+walk_forward_weights builds the combined book in notebook 06. impact_drag and
+capacity_by_coin are notebook 11's market-impact model; max_capacity,
+capacity_curve, regime_table and by_year are for follow-up checks.
 """
 from __future__ import annotations
 

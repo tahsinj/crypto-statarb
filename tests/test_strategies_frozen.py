@@ -81,6 +81,33 @@ def test_carry_sleeve_receives_funding_on_shorts():
     assert s.dropna().mean() > 0, "carry sleeve should collect funding on shorts"
 
 
+def test_carry_fallback_fills_a_held_coins_missing_return():
+    """A held coin with no perp return earns its spot move with the fallback, and nothing without it."""
+    price, rets, uni, _, fund = _toy()
+    held = strategies.carry_weights(fund, uni).shift(1)
+    day = rets.index[200]
+    coin = held.loc[day].abs().idxmax()                    # the largest position held that day
+    perp = rets.copy()
+    perp.loc[day, coin] = np.nan                           # its perp data dropped for the day
+    gaps = strategies.carry_sleeve(fund, perp, uni)
+    filled = strategies.carry_sleeve(fund, perp, uni, fallback_returns=rets)
+    full = strategies.carry_sleeve(fund, rets, uni)
+    assert np.array_equal(filled.to_numpy(), full.to_numpy(), equal_nan=True)
+    assert np.isclose(full[day] - gaps[day], held.loc[day, coin] * rets.loc[day, coin])
+    assert np.allclose(gaps.drop(day).dropna(), full.drop(day).dropna())
+
+
+def test_v2_spot_fallback_is_off_by_default():
+    price, rets, uni, imb, fund = _toy()
+    perp = rets.copy()
+    perp.iloc[[150, 170, 190], :3] = np.nan                # one-day gaps in three coins' perp data
+    registered = strategies.v2_sleeves(imb, rets, perp, fund, uni)
+    no_fill = strategies.carry_sleeve(fund, perp, uni, weighting="rank")
+    assert np.array_equal(registered["carry"].to_numpy(), no_fill.to_numpy(), equal_nan=True)
+    fixed = strategies.v2_sleeves(imb, rets, perp, fund, uni, spot_fallback=True)
+    spot = strategies.carry_sleeve(fund, rets, uni, weighting="rank")
+    assert np.array_equal(fixed["carry"].to_numpy(), spot.to_numpy(), equal_nan=True)
+    assert fixed["orderflow"].equals(registered["orderflow"])
 
 
 def test_rank_weights_keep_one_coin_from_taking_a_side():
@@ -117,6 +144,8 @@ if __name__ == "__main__":
                test_charge_resizing_costs_more_when_the_book_is_resized,
                test_orderflow_sleeve_runs_and_named,
                test_carry_sleeve_receives_funding_on_shorts,
+               test_carry_fallback_fills_a_held_coins_missing_return,
+               test_v2_spot_fallback_is_off_by_default,
                test_rank_weights_keep_one_coin_from_taking_a_side,
                test_carry_default_is_the_frozen_zscore_rule,
                test_v2_book_is_the_mean_of_its_sleeves]:

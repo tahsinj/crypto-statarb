@@ -91,6 +91,21 @@ def run(
     )
 
 
+def fill_gap_starts(returns: pd.DataFrame, fallback: pd.DataFrame) -> pd.DataFrame:
+    """``returns`` with the first day of each run of missing values taken from ``fallback``.
+
+    Made for perp returns, which the every-pair panels drop on days a contract
+    trades more than 20% away from spot or stops trading (data.archive_panels).
+    A position held into such a day still moved, on a crash day or into a
+    delisting, and the coin's spot move stands in for it. Later days in the
+    same gap stay missing, so a position that cannot be closed (run_limit_fills
+    needs a bar to fill) is treated as settled at its last price, which is what
+    happens to a delisted perp.
+    """
+    first = returns.isna() & returns.shift(1).notna()
+    return returns.fillna(fallback.reindex_like(returns).where(first))
+
+
 def run_limit_fills(
     weights: pd.DataFrame,
     returns: pd.DataFrame,
@@ -108,7 +123,10 @@ def run_limit_fills(
     cancelled, the old position is kept for the day, and the next close sends
     a new order toward the new target. Orders miss exactly when the price runs
     away from them, which run() cannot show. Costs are charged on filled
-    trades, on the day they fill. Returns the result and the positions held.
+    trades, on the day they fill. A coin with no bar cannot fill, so a
+    position in a contract that stops trading stays on the books; where its
+    returns are missing it earns nothing, as if settled at its last price.
+    Returns the result and the positions held.
     """
     idx, cols = returns.index, returns.columns
     w = weights.reindex(index=idx, columns=cols).fillna(0.0).to_numpy()

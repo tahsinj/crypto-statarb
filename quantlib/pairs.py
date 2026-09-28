@@ -5,9 +5,12 @@ were in the universe for most of the trailing year: return correlation above
 min_corr, a positive hedge ratio on log prices, and a spread half-life between
 2 and 60 days. Each pair then trades its spread z-score with hysteresis.
 
-Everything is point-in-time: selection only sees data up to the rebalance
-date, the spread z-score uses a trailing mean and std shifted by one day, and
-pair returns use the previous day's position.
+The spread z-score uses a trailing mean and std shifted by one day, and pair
+returns use the previous day's position. Selection is the exception: it sees
+data up to and including the rebalance date, and the new pairs then earn that
+day's return, a one-day look-ahead at each rebalance. The research ran that
+way; backtest_pairs(lag_selection=True) picks the pairs with data up to the
+day before.
 """
 from __future__ import annotations
 
@@ -115,6 +118,7 @@ def backtest_pairs(
     borrow_bps_annual: float = 0.0,
     selector=select_pairs,
     charge_boundaries: bool = False,
+    lag_selection: bool = False,
     **select_kw,
 ):
     """Run the pairs strategy; returns (net_returns, turnover, info).
@@ -124,14 +128,16 @@ def backtest_pairs(
     carry on the short notional held (0 = off). info records the pairs chosen
     at each rebalance.
 
-    Two things to know when reading the results. Turnover is charged inside
+    Three things to know when reading the results. Turnover is charged inside
     each rebalance segment only: a newly selected pair that already has a
     position on (from its z-score history) is not charged for opening it, and
-    a dropped pair is not charged for closing. And with exit=0, a spread
+    a dropped pair is not charged for closing. With exit=0, a spread
     position is only closed or flipped when the z-score crosses the opposite
     entry band. charge_boundaries=True charges both: every pair pays to open
     at the start of its segment and to close at the end, even when it is
-    selected again, so it is an upper bound on the missing cost.
+    selected again, so it is an upper bound on the missing cost. And the
+    selector sees the rebalance date's close, while the segment's P&L starts
+    on that same date; lag_selection=True calls it with the day before.
     """
     logp = np.log(price)
     dates = returns.loc[start:].index
@@ -147,7 +153,8 @@ def backtest_pairs(
         seg = dates[(dates >= rb) & (dates < end)]
         if len(seg) == 0:
             continue
-        pairs = selector(logp, returns, universe, rb, **select_kw)
+        asof = rb - pd.Timedelta(days=1) if lag_selection else rb
+        pairs = selector(logp, returns, universe, asof, **select_kw)
         chosen[rb] = [(a, b) for a, b, _, _ in pairs]
         if not pairs:
             continue
