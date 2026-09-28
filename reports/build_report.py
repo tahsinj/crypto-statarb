@@ -1,13 +1,14 @@
 """Build the PDF research report, ``reports/REPORT.pdf``.
 
-Every number in the report is computed here from the artifacts in
-data/processed/ (written by notebooks 00-11), from the twsq CSVs in alphas/,
-or, for the fast-reversal grid, read from notebook 05's executed output. The
-script checks the headline numbers against the values the notebooks printed
-and stops without writing the PDF if anything disagrees. Run it after the
-notebooks:
+The report's results are computed here from the artifacts in data/processed/
+(written by notebooks 00-11), from the twsq CSVs in alphas/, or, for the
+fast-reversal grid, read from notebook 05's executed output. The script checks
+the headline numbers against the values the notebooks printed, and the numbers
+in README.md and alphas/README.md against the same results, and stops without
+writing the PDF if anything disagrees. Run it after the notebooks:
 
-    .venv/bin/python reports/build_report.py
+    .venv/bin/python reports/build_report.py           # check, then write the PDF
+    .venv/bin/python reports/build_report.py --check   # check only, and that REPORT.pdf is up to date
 
 The PDF is written with fpdf2 (pure Python).
 """
@@ -16,6 +17,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 import matplotlib
@@ -34,6 +36,9 @@ from quantlib import backtest, metrics, plotting, robustness, signals, strategie
 PROC = ROOT / "data" / "processed"
 ALPHAS = ROOT / "alphas"
 OUT = ROOT / "reports" / "REPORT.pdf"
+# The PDF is dated by its data, not by when it was built, so the same inputs
+# give the same file, byte for byte; --check relies on it.
+BUILD_DATE = datetime(2026, 9, 26, tzinfo=timezone.utc)
 
 DEV_START, DEV_END = "2020-01-01", "2024-07-31"
 GATE_START, GATE_END = "2024-08-01", "2025-06-30"
@@ -566,6 +571,92 @@ def compute(d: dict) -> dict:
     return v
 
 
+def doc_failures(v: dict, d: dict) -> list:
+    """Numbers in README.md and alphas/README.md that no longer match the results.
+
+    Each piece of text is rebuilt from the same values as the report and has
+    to appear in the file as written (line breaks aside), so a number that
+    drifts in either README stops the build like one in the report.
+    """
+    st, v2f, v2s, sd, fl, F, pc, oos = (v[k] for k in ["steps", "v2f", "v2", "same_dates", "full", "fwd",
+                                                       "pairs_c", "oos"])
+    lk_wf, sl, base, tw = v["book"][("WF", "Lockbox")], v["sleeve"], v["base"], v["twsq"]
+    fo = v["fills"].loc["orderflow"]
+    miss_cost = 1 - fo["price P&L, fill model"] / fo["price P&L, every order filled"]
+    fr4 = fastrev_grid().set_index(["lookback_h", "rebal_h"]).loc[(4, 1)]
+    split = d["carry_split"]
+    n_reg = len(d["registry"])
+    s = lambda key: v2f[key]["sharpe"]                       # noqa: E731
+    readme = [
+        f"a registry of all {n_reg} configurations tried, deflated Sharpe ratios that charge for the "
+        f"{N_TRIALS} research ones",
+        f"{pct(v['surv'], 0)} of the historical top-100 universe was missing from it",
+        f"with all {v['n_all']} coins, delisted ones included, the book's lockbox Sharpe falls from "
+        f"{lk_wf['sharpe']:.2f} to {st[('2 every pair', 'walk_forward')]['Lockbox']:.2f}",
+        f"{pct(fo['filled share of orders'], 0)} of limit orders fill",
+        f"costs Orderflow {pct(miss_cost, 0)} of its price P&L on dev",
+        f"weighted by rank on perp prices, Sharpe {s(('Carry', 'Dev')):.2f} and {s(('Carry', 'Gate')):.2f}",
+        f"those dates the equal-weight book's is {sr(sd['Dev']['ew'])}",
+        f"as first run they were {sr(v2s[('Book', 'Dev')]['sharpe'])} and {sr(v2s[('Book', 'Gate')]['sharpe'])}, "
+        f"and {sr(v2s[('Carry', 'Dev')]['sharpe'])} and {sr(v2s[('Carry', 'Gate')]['sharpe'])} for Carry",
+        f"{N_TRIALS} research configs, which the deflated Sharpe ratio charges for",
+        f"the three v2 rows, {n_reg} in all",
+        f"had a Sharpe of {lk_wf['sharpe']:.2f}, an alpha of {pct(lk_wf['alpha'])} a year (Newey-West t = "
+        f"{lk_wf['alpha_t']:.2f}) and a beta to BTC of {lk_wf['beta']:.2f}. Its deflated Sharpe was {v['dsr_lk']:.2f}",
+        f"Carry runs at about {pct(v['carry_scale']['Gate']['vol'], 0)} volatility",
+        f"left out {pct(v['surv'], 0)} of the historical universe",
+        f"moves its dev Sharpe from {pc['as run']['Dev']:.2f} to {pc['picked a day earlier']['Dev']:.2f}",
+        f"Adding the {F['Book, walk-forward']['n']}-day forward test",
+        f"a Sharpe of {oos['sharpe']:.2f} over {oos['n']} days",
+        f"Sharpe of {s(('Book', 'Dev')):.2f} and {s(('Book', 'Gate')):.2f}, nearly all from Carry "
+        f"({s(('Carry', 'Dev')):.2f} and {s(('Carry', 'Gate')):.2f}); its Orderflow sleeve fails the gate "
+        f"({s(('Orderflow', 'Gate')):.2f})",
+        f"As first run they were {v2s[('Book', 'Dev')]['sharpe']:.2f} and {v2s[('Book', 'Gate')]['sharpe']:.2f} "
+        f"(Carry {v2s[('Carry', 'Dev')]['sharpe']:.2f} and {v2s[('Carry', 'Gate')]['sharpe']:.2f})",
+        f"(Sharpe {s(('Carry', 'Dev')):.2f} and {s(('Carry', 'Gate')):.2f})",
+        f"(lockbox {sr(sl[('orderflow', 'Lockbox')]['sharpe'])})",
+        f"(dev {sr(base[('momentum', 'Dev')]['sharpe'])}, gate {sr(base[('momentum', 'Gate')]['sharpe'])})",
+        f"Pairs trading lost money on dev ({base[('reversal', 'Dev')]['sharpe']:.2f})",
+        f"(gross Sharpe {fr4.gross_sharpe_dev:+.2f} at a 4-hour lookback) but costs {fr4.cost_drag_ann:.0%} a year "
+        f"against a {fr4.gross_ann:.0%} gross return",
+        f"on dev only by {sd['Dev']['ew']:.2f} to {sd['Dev']['wf']:.2f}",
+        "(Sharpe " + ", ".join(sr(tw.loc[n, "sharpe"]) for n in ["SeasonalMomentum", "OrderflowFollow"])
+        + f" and {sr(tw.loc['FundingCarry', 'sharpe'])})",
+        f"an {F['Book, walk-forward']['n']}-day forward test",
+        f"holds exactly {N_TRIALS} rows",
+    ]
+    for key, lab in [("walk_forward", "walk-forward"), ("equal_weight", "equal weight")]:
+        for step, lst in [("0 as run", "research coin list"), ("2 every pair", "every pair")]:
+            readme.append(f"| Frozen book, {lab}, {lst} | " + " | ".join(sr(st[(step, key)][w]) for w in RWIN) + " |")
+    for n, lab in [("Book", "v2 book"), ("Carry", "v2 Carry sleeve")]:
+        readme.append(f"| {lab}, every pair | {sr(s((n, 'Dev')))} | {sr(s((n, 'Gate')))} | not run | from {strategies.V2_START} |")
+    for key, lab in [("Book, equal weight", "Book, equal weight"),
+                     ("Book, walk-forward", f"Book, walk-forward (from {fl['Book, walk-forward']['start']:%Y-%m})"),
+                     ("Seasonality", "Seasonality"), ("Orderflow", "Orderflow"), ("Carry", "Carry"),
+                     ("Baseline momentum", "Baseline momentum"), ("Baseline pairs", "Baseline pairs"), ("BTC", "BTC")]:
+        r = fl[key]
+        tail = f"{sr(r['beta'])} | {alpha_cell(r)}" if "alpha" in r else " |"
+        readme.append(f"| {lab} | {pct(r['ret'])} | {pct(r['vol'])} | {r['sharpe']:.2f} | {pct(r['mdd'])} | {tail} |")
+    for step, lab in [("0 as run", "As run (research coin list)"), ("0b archive data", "Same list, archive data"),
+                      ("1 non-crypto out", "Pegged assets and tokenized stocks out"),
+                      ("2 every pair", "Every pair, delisted coins included"),
+                      ("3 carry on perps", "and Carry on perp prices"),
+                      ("4 limit fills", "and limit orders that have to fill")]:
+        readme.append(f"| {lab} | {sr(st[(step, 'walk_forward')]['Lockbox'])} | "
+                      f"{sr(st[(step, 'equal_weight')]['Lockbox'])} |")
+    alphas = [f"All three runs cover the same {v['twsq_days']} days",
+              f"funding income is {pct(split.loc['dev', 'funding share of total'], 0)} of the carry sleeve's P&L "
+              f"on dev and {pct(split.loc['gate', 'funding share of total'], 0)} on the gate"]
+    for name, r in tw.iterrows():
+        alphas.append(f"| {name} | {pct(r['ann_return'])} | {pct(r['ann_vol'])} | {sr(r['sharpe'])} | "
+                      f"{pct(r['max_drawdown'])} | {pct(r['avg_daily_turnover'], 0)} |")
+    failures = []
+    for path, texts in [(ROOT / "README.md", readme), (ALPHAS / "README.md", alphas)]:
+        doc = " ".join(path.read_text().split())
+        failures += [f"  {path.relative_to(ROOT)}: expected \"{t}\"" for t in texts if " ".join(t.split()) not in doc]
+    return failures
+
+
 # ---------------------------------------------------------------------------
 # Tables
 # ---------------------------------------------------------------------------
@@ -823,7 +914,7 @@ class Report(FPDF):
         self.ln(2)
 
 
-def build_pdf(d: dict, v: dict, figs: dict) -> int:
+def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
     reg = d["registry"]
     book, bookc, sl, base, fl, F = v["book"], v["book_c"], v["sleeve"], v["base"], v["full"], v["fwd"]
     st, v2s, v2f, sd = v["steps"], v["v2"], v["v2f"], v["same_dates"]
@@ -849,6 +940,7 @@ def build_pdf(d: dict, v: dict, figs: dict) -> int:
     of_cut = 1 - stress.loc[("orderflow", 20), "dev"] / stress.loc[("orderflow", 7), "dev"]
 
     pdf = Report(format="A4")
+    pdf.set_creation_date(BUILD_DATE)
     pdf.set_auto_page_break(True, margin=15)
     pdf.set_margins(18, 15, 18)
     pdf.add_page()
@@ -931,8 +1023,9 @@ def build_pdf(d: dict, v: dict, figs: dict) -> int:
         f"{v2f[('Carry', 'Gate')]['sharpe']:.2f}. v2 is built on it and is being tested on new data "
         "(section 7).",
         "Code that checks itself. The shared library has tests for look-ahead, dollar neutrality, "
-        "costs, the fill model and the data pipeline, and the report is rebuilt from the notebooks' "
-        "saved results and stops before writing the PDF if a headline number disagrees with them.",
+        "costs, the fill model and the data pipeline; the report is rebuilt from the notebooks' "
+        "saved results and stops before writing the PDF if a headline number, in the report or the "
+        "README, disagrees with them; and check.py runs every check in one command.",
     ])
 
     # 1. Data and method
@@ -1608,20 +1701,33 @@ def build_pdf(d: dict, v: dict, figs: dict) -> int:
                      sr(dev) if np.isfinite(dev) else "n/a", sr(gate) if np.isfinite(gate) else "n/a"])
     pdf.table_block(rows, widths=(8, 22, 70, 12, 12), align=("RIGHT", "LEFT", "LEFT", "RIGHT", "RIGHT"))
 
-    OUT.parent.mkdir(exist_ok=True)
-    pdf.output(str(OUT))
-    print(f"Wrote {OUT} ({OUT.stat().st_size // 1024} KB, {pdf.page} pages)")
+    out.parent.mkdir(exist_ok=True)
+    pdf.output(str(out))
+    print(f"Wrote {out} ({out.stat().st_size // 1024} KB, {pdf.page} pages)")
     return pdf.page
 
 
 def main():
+    """Build the PDF, or with --check only check: the report's and READMEs' numbers, and
+    that reports/REPORT.pdf is what the current code and data produce, byte for byte."""
+    check_only = "--check" in sys.argv[1:]
     d = load_inputs()
     print("Checking report numbers against the notebooks...")
     v = compute(d)
-    print("  all checks passed")
+    docs = doc_failures(v, d)
+    if docs:
+        raise AssertionError("README numbers disagree with the results; PDF not written.\n" + "\n".join(docs))
+    print("  all checks passed, README.md and alphas/README.md included")
     with tempfile.TemporaryDirectory() as td:
         figs = make_figures(d, Path(td))
-        build_pdf(d, v, figs)
+        if not check_only:
+            build_pdf(d, v, figs)
+            return
+        fresh = Path(td) / "REPORT.pdf"
+        build_pdf(d, v, figs, out=fresh)
+        if fresh.read_bytes() != OUT.read_bytes():
+            raise AssertionError("reports/REPORT.pdf is out of date; run reports/build_report.py")
+        print("  reports/REPORT.pdf matches the code and data")
 
 
 if __name__ == "__main__":
