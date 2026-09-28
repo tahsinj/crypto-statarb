@@ -263,7 +263,7 @@ print("saved sleeves_full, posthoc_book, posthoc_cost_stress, posthoc_carry_spli
 # ## Conclusion
 #
 # **Seasonality.** Charging every resizing trade costs the sleeve about 2.7%
-# a year on dev. Its Sharpe falls from 1.79 to 1.52 on dev, from 1.24 to 0.99
+# a year on dev. Its Sharpe falls from 1.79 to 1.51 on dev, from 1.24 to 0.99
 # on the gate and from -0.56 to -0.89 on the lockbox. The untilted momentum
 # sleeve, charged the same way, scores 1.64 on dev and 0.42 on the gate. The
 # overlay still wins on the gate but loses on dev, so under notebook 02's

@@ -14,7 +14,7 @@
 # later idea has to beat: time-series momentum (sign of the 30-day return,
 # vol-targeted to 15%) and correlation pairs. Their settings were fixed before
 # the gate window, so the gate shows how they hold up on data they were not
-# chosen on. Everything here stops at 2025-06-30; the lockbox is only read in
+# chosen on. Everything here stops at 2025-06-30; the lockbox is first read in
 # notebook 06.
 
 from pathlib import Path

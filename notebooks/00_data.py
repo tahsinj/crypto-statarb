@@ -14,14 +14,19 @@
 # `data/raw/`) and writes the processed panels that the later notebooks read.
 #
 # Windows used throughout: development 2020-01 to 2024-07, gate 2024-08 to
-# 2025-06, lockbox 2025-07 to the end of the data. Only notebook 06 reads the
-# lockbox.
+# 2025-06, lockbox 2025-07 to the end of the data. Notebook 06 opens the
+# lockbox; notebooks 07, 08 and 11 re-score the frozen book on it afterwards
+# and say so.
 #
 # The cached data in this project was fetched on 2026-07-06 at about 15:20
 # UTC, so the last day in each panel (2026-07-06) is a partial day. `END` pins
 # the sample to that date; without it a rerun would quietly extend the data
-# and change every window that runs "to the end". A rerun still picks the top
-# 150 pairs by volume on the day it runs, so its universe can differ.
+# and change every window that runs "to the end". The coin list is pinned too,
+# in `data.RESEARCH_COINS`: the top 150 pairs by volume that day, of which 149
+# returned data. The cache never expires, so a rerun reads it, and only
+# `FORCE = True` downloads again. A new download asks for the same coins but
+# may not match the cache: the API refuses US IP addresses, and a pair Binance
+# has since removed may no longer be served.
 
 from pathlib import Path
 
@@ -36,16 +41,19 @@ ROOT = Path.cwd().parent if Path.cwd().name == "notebooks" else Path.cwd()
 RAW, PROC = ROOT / "data" / "raw", ROOT / "data" / "processed"
 PROC.mkdir(parents=True, exist_ok=True)
 
-FORCE = False       # set True to refetch regardless of cache age
+FORCE = False       # set True to download again; otherwise the cache is always used
 END = "2026-07-06"  # last bar kept (UTC); the fetch stops here
+KEEP = float("inf")  # cache age limit in days: never refetch on its own
 
-# ## Daily panel (top 150 pairs, 2018 to END)
+# ## Daily panel (the research coin list, 2018 to END)
 
 raw_1d = fetch.refresh(
     RAW / "binance_1d.pkl.zip",
-    lambda: fetch.fetch_binance(top_n=150, start="2018-01-01", end=END),
-    force=FORCE,
+    lambda: fetch.fetch_binance(symbols=list(data.RESEARCH_COINS), start="2018-01-01", end=END),
+    max_age_days=KEEP, force=FORCE,
 )
+assert sorted(set(raw_1d.columns.get_level_values(0))) == sorted(data.RESEARCH_COINS), \
+    "the daily data is not the research coin list"
 panels = data.to_panels(raw_1d)
 print(raw_1d.shape, raw_1d.index.min().date(), "->", raw_1d.index.max().date())
 
@@ -65,7 +73,7 @@ top60 = adv_now.dropna().sort_values(ascending=False).head(60).index.tolist()
 raw_1h = fetch.refresh(
     RAW / "binance_1h.pkl.zip",
     lambda: fetch.fetch_binance(symbols=top60, start="2020-01-01", end=END, interval="1h"),
-    force=FORCE,
+    max_age_days=KEEP, force=FORCE,
 )
 panels_1h = data.to_panels(raw_1h)
 print(raw_1h.shape)
@@ -75,7 +83,7 @@ print(raw_1h.shape)
 funding = fetch.refresh(
     RAW / "funding.pkl.zip",
     lambda: fetch.fetch_funding(top60, start="2019-09-01", end=END),
-    force=FORCE,
+    max_age_days=KEEP, force=FORCE,
 )
 print("funding coverage:", funding.shape)
 

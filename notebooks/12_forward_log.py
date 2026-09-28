@@ -26,7 +26,9 @@
 #   did not have: its coin list, sleeves, walk-forward weights and costs.
 #   Notebook 08 ran its first 82 days.
 # - v2 (notebook 10), from 2026-09-28, the first full day after it was
-#   registered.
+#   registered. It runs with `spot_fallback=True`: Carry keeps a held coin's
+#   spot move on the days its perp data is dropped, a measurement fix made
+#   after v2's first run and before its test began (notebook 11).
 # - v2's two sleeves on their own, since notebook 10 found that its
 #   Orderflow sleeve fails the gate on the every-pair universe.
 #
@@ -152,7 +154,7 @@ print(f"v1 walk-forward vs notebook 08 over its 82 days: largest daily gap {agre
 uni_v2 = data.build_universe(allp, top_n=100, min_adv_usd=1_000_000)
 v2 = strategies.v2_sleeves(allp["taker_imbalance"], allp["returns"],
                            allp["perp_returns"].reindex(columns=uni_v2.columns),
-                           allp["funding"].reindex(columns=uni_v2.columns), uni_v2)
+                           allp["funding"].reindex(columns=uni_v2.columns), uni_v2, spot_fallback=True)
 v2_book = strategies.v2_book(v2)
 btc = allp["returns"]["BTC"]
 

@@ -32,7 +32,7 @@
 #       with a timing test only if the gap is material
 #   P4  turn-of-month tilt on the momentum sleeve (daily, 20 bps)
 #
-# Everything stops at 2025-06-30; the lockbox is only read in notebook 06.
+# Everything stops at 2025-06-30; the lockbox is first read in notebook 06.
 
 from pathlib import Path
 

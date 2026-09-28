@@ -21,7 +21,10 @@
 # and walk-forward settings. Like notebook 07, this re-scores the lockbox
 # year with corrected inputs; it changes nothing in the book and chooses
 # nothing. v2's rules were committed before this notebook was first run, so
-# none of it feeds into them. No trials are logged.
+# none of it feeds into them. One thing found after that first run changed
+# how v2 is measured, not what it trades: Carry now keeps a coin's spot move
+# on the days its perp data is dropped (step 3 and the last section). No
+# trials are logged.
 #
 # The steps build on each other:
 #
@@ -176,10 +179,30 @@ pd.DataFrame(gate_rows).T
 # -
 
 # ## Step 3: Carry on perp prices
+#
+# The perp panels drop a contract's data on days it trades more than 20% away
+# from spot (notebook 09). A coin Carry holds on such a day keeps its spot
+# move for the day (`fallback_returns`). The first run of this notebook left
+# those days at zero, which dropped the moves of a few crash days.
 
 perp_returns = A["perp_returns"].reindex(columns=uni2.columns)
-s3 = s2.assign(carry=from_funding_start(strategies.carry_sleeve(fund2, perp_returns, uni2)))
+s3 = s2.assign(carry=from_funding_start(strategies.carry_sleeve(fund2, perp_returns, uni2,
+                                                                 fallback_returns=A["returns"])))
 step[3] = pd.concat([s3, book(s3)], axis=1)
+
+# The held positions the fallback fills, largest first (P&L as a share of
+# the sleeve), and the sleeve with and without it:
+
+# +
+spot_r = A["returns"].reindex_like(perp_returns)
+held3 = strategies.carry_weights(fund2, uni2).shift(1).reindex_like(perp_returns)
+gap = held3.notna() & (held3 != 0) & perp_returns.isna() & spot_r.notna()
+gap_pnl = (held3 * spot_r).where(gap).stack().dropna()
+print(f"held coin-days with no perp return: {len(gap_pnl)}, their spot P&L {gap_pnl.sum():+.3f}")
+print(gap_pnl.sort_values().head(6).round(3).to_string())
+no_fill = from_funding_start(strategies.carry_sleeve(fund2, perp_returns, uni2))
+pd.DataFrame({"gaps left at zero (first run)": by_window(no_fill), "spot move on gaps": by_window(s3["carry"])}).T.round(2)
+# -
 
 # ## Step 4: limit orders that have to be filled
 #
@@ -187,14 +210,19 @@ step[3] = pd.concat([s3, book(s3)], axis=1)
 # day's close, and one fills only if the next day trades through its price.
 # Orderflow uses spot bars and Carry perp bars. A missed order is replaced
 # at the next close, so positions lag their targets on exactly the days the
-# price runs away.
+# price runs away. An order cannot fill on a contract whose perp data has
+# dropped out, so a Carry position there stays on the books: it keeps the
+# spot move of the day the data drops out, as in step 3, and is then treated
+# as settled at its last price (`backtest.fill_gap_starts`), which is what
+# happens to a delisted perp.
 
 # +
 w_of = strategies.orderflow_weights(A["taker_imbalance"], uni2)
 of4, held_of = backtest.run_limit_fills(w_of, A["returns"], A["price"], A["high"], A["low"], cost_bps=7.0)
 w_ca = strategies.carry_weights(fund2, uni2)
 perp_px, perp_hi, perp_lo = (A[k].reindex(columns=uni2.columns) for k in ["perp_price", "perp_high", "perp_low"])
-ca4, held_ca = backtest.run_limit_fills(w_ca, perp_returns, perp_px, perp_hi, perp_lo, cost_bps=7.0)
+perp_filled = backtest.fill_gap_starts(perp_returns, spot_r)
+ca4, held_ca = backtest.run_limit_fills(w_ca, perp_filled, perp_px, perp_hi, perp_lo, cost_bps=7.0)
 carry4 = ca4.net_returns - (held_ca * fund2).sum(axis=1).reindex(ca4.net_returns.index)
 s4 = s3.assign(orderflow=of4.net_returns.reindex(s3.index), carry=from_funding_start(carry4.reindex(s3.index)))
 step[4] = pd.concat([s4, book(s4)], axis=1)
@@ -202,7 +230,7 @@ step[4] = pd.concat([s4, book(s4)], axis=1)
 fills = {}
 for name, w, held, rets, close, hi, lo in [
         ("orderflow", w_of, held_of, A["returns"], A["price"], A["high"], A["low"]),
-        ("carry", w_ca, held_ca, perp_returns, perp_px, perp_hi, perp_lo)]:
+        ("carry", w_ca, held_ca, perp_filled, perp_px, perp_hi, perp_lo)]:
     target = w.reindex_like(held).fillna(0.0).shift(1)          # what run() holds each day
     traded = hi.reindex_like(held).notna() & lo.reindex_like(held).notna() & close.reindex_like(held).shift(1).notna()
     missed = (target - held).where(traded)                       # a coin with no bar cannot fill at all
@@ -338,20 +366,26 @@ fast.round(2)
 # large as the trading cost at the best settings, but nowhere near three
 # times it, and every config still loses money after costs on dev and gate.
 
-# ## The pairs baseline with its rebalance trades charged
+# ## The pairs baseline, fully charged and without its look-ahead
 #
 # The pairs engine does not charge for positions a pair already has when it
 # is selected, or for closing pairs dropped at a rebalance. Charging both at
 # every rebalance, even for pairs selected again, gives an upper bound on
-# what is missing. Research data, as in notebook 01.
+# what is missing. The engine also picks its pairs with the rebalance date's
+# close and then books that date's return for them, a one-day look-ahead at
+# each rebalance; `lag_selection=True` picks them with data up to the day
+# before. Research data, as in notebook 01.
 
 # +
 price_r, returns_r, uni_r = (pd.read_parquet(PROC / f"{n}.parquet") for n in ["price", "returns", "universe"])
-pairs_charged = pairs.backtest_pairs(price_r, returns_r, uni_r, start="2020-01-01", cost_bps=7.0,
-                                                entry=2.0, exit=0.0, zwin=30, min_corr=0.8, top_k=20,
-                                                charge_boundaries=True)[0]
+pairs_kw = dict(start="2020-01-01", cost_bps=7.0, entry=2.0, exit=0.0, zwin=30, min_corr=0.8, top_k=20)
+pairs_charged = pairs.backtest_pairs(price_r, returns_r, uni_r, charge_boundaries=True, **pairs_kw)[0]
+pairs_lagged = pairs.backtest_pairs(price_r, returns_r, uni_r, lag_selection=True, **pairs_kw)[0]
+pairs_both = pairs.backtest_pairs(price_r, returns_r, uni_r, charge_boundaries=True, lag_selection=True,
+                                  **pairs_kw)[0]
 base = pd.read_parquet(PROC / "baselines_full.parquet")["reversal"]
-pairs_table = pd.DataFrame({"as run": by_window(base), "rebalance trades charged": by_window(pairs_charged)}).T
+pairs_table = pd.DataFrame({"as run": by_window(base), "rebalance trades charged": by_window(pairs_charged),
+                            "picked a day earlier": by_window(pairs_lagged), "both": by_window(pairs_both)}).T
 pairs_table.drop(columns="forward").round(2)
 # -
 
@@ -390,6 +424,31 @@ for col in ["walk_forward", "orderflow"]:
 pd.DataFrame(beta_rows).T.round(3)
 # -
 
+# ## v2 re-measured, dev and gate only
+#
+# v2's Carry sleeve, as registered and first run in notebook 10, has the same
+# gap as step 3. Its test uses `v2_sleeves(spot_fallback=True)` from its
+# first day, 2026-09-28, so here are its dev and gate numbers with the fix.
+# The data is cut at the end of the gate first, as in notebook 10, so v2 is
+# still never run on the lockbox or the forward window. Without the fix the
+# same code has to give notebook 10's numbers exactly.
+
+# +
+cut = {k: A[k].loc[:"2025-06-30"] for k in ["returns", "taker_imbalance", "universe", "perp_returns", "funding"]}
+u = cut["universe"]
+v2_args = (cut["taker_imbalance"], cut["returns"], cut["perp_returns"].reindex(columns=u.columns),
+           cut["funding"].reindex(columns=u.columns), u)
+registered = pd.read_parquet(PROC / "v2_dev_gate.parquet")
+as_registered = strategies.v2_sleeves(*v2_args)
+assert as_registered.equals(registered[["orderflow", "carry"]])
+v2_fixed = strategies.v2_sleeves(*v2_args, spot_fallback=True)
+v2_fixed["v2"] = strategies.v2_book(v2_fixed)
+v2_table = pd.DataFrame({(label, col): {w: metrics.sharpe(s[col].loc[WINDOWS[w]].dropna()) for w in ["dev", "gate"]}
+                         for label, s in [("as registered", registered), ("spot move on gaps", v2_fixed)]
+                         for col in ["v2", "orderflow", "carry"]}).T
+v2_table.round(3)
+# -
+
 # ## What the checks say
 #
 # The data source is not the problem: rebuilt from the archive, the research
@@ -408,9 +467,14 @@ pd.DataFrame(beta_rows).T.round(3)
 # and BNX, which it bought because their funding had turned negative.
 #
 # The other steps matter less, with one exception. Perp prices help Carry a
-# little. Limit orders that have to be filled hurt Orderflow even though
-# about 99% of what it orders fills the next day. The misses are the days the
-# price ran away: where a buy missed, the coin rose 7.1% that day on average,
+# little, though less than the first run of this notebook showed. That run
+# left the 82 held coin-days with no perp return at zero, the crash days of
+# LUNA (May 2022), FTT (November 2022) and VIDT (April 2025) among them;
+# giving them the spot move takes Carry's step-3 Sharpe from 0.40 to 0.30 on
+# dev and from -1.58 to -1.72 on the gate. Limit orders that have to be
+# filled hurt Orderflow even though about 99% of what it orders fills the
+# next day. The misses are the days the price ran away: where a buy missed,
+# the coin rose 7.1% that day on average,
 # and where a sell missed it fell 5.7%. Missing 0.3% of the positions costs
 # about 30 of Orderflow's 70 points of gross P&L on dev, and its dev Sharpe
 # falls from 0.44 to 0.09. Even on the research list, most of Orderflow's
@@ -419,7 +483,9 @@ pd.DataFrame(beta_rows).T.round(3)
 # somewhere between $1M and $10M. Notebook 05's hourly reversal, rerun on
 # every pair, has a larger gross edge than on its 60 coins but still loses
 # money after costs in every config. Charging the pairs baseline for its
-# rebalance trades barely moves it.
+# rebalance trades barely moves it, and neither does picking its pairs a day
+# earlier, which removes its one-day look-ahead at each rebalance (dev -0.37
+# against -0.40, gate 0.43 against 0.53).
 #
 # Put together, the lockbox year and the forward test give the frozen book,
 # as run, a Sharpe of 0.37 over 453 days (t = 0.4). In the forward window
@@ -429,7 +495,10 @@ pd.DataFrame(beta_rows).T.round(3)
 # The frozen book's lockbox result came mostly from its coin list. v2
 # (notebook 10) was registered before these checks ran; it trades the
 # every-pair universe with rank-weighted Carry on perps, and its test is the
-# data from 2026-09-28 on.
+# data from 2026-09-28 on. Its Carry sleeve had the same gap as step 3. With
+# the fix, which its test uses from the first day, v2 has a Sharpe of 1.36 on
+# dev and 1.11 on the gate (1.39 and 1.12 as registered), and its Carry 1.70
+# and 2.41 (1.76 and 2.41).
 
 # ## Save for the report
 
@@ -439,7 +508,10 @@ series.columns = [f"{a}|{b}" for a, b in series.columns]
 series.to_parquet(PROC / "realism_steps.parquet")
 pd.DataFrame(size).to_parquet(PROC / "realism_size.parquet")
 capacity.rename_axis(["sleeve", "aum"]).to_csv(PROC / "realism_capacity.csv")
-pd.DataFrame({"as run": base, "charged": pairs_charged}).to_parquet(PROC / "realism_pairs.parquet")
+pd.DataFrame({"as run": base, "charged": pairs_charged, "picked a day earlier": pairs_lagged,
+              "both": pairs_both}).to_parquet(PROC / "realism_pairs.parquet")
+v2_fixed.to_parquet(PROC / "realism_v2.parquet")
+pd.DataFrame({"gaps at zero": no_fill, "spot move on gaps": s3["carry"]}).to_parquet(PROC / "realism_gaps.parquet")
 record.rename_axis("book").to_csv(PROC / "realism_oos.csv")
 pd.DataFrame(fills).T.rename_axis("sleeve").to_csv(PROC / "realism_fills.csv")
 pd.DataFrame(beta_rows).T.rename_axis("series").to_csv(PROC / "realism_beta.csv")
