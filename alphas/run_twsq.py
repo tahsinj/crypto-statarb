@@ -13,7 +13,7 @@ Then, from this alphas/ directory:
 
 twsq's backtester prices and fills on Binance daily bars, downloaded through
 ccxt with no API key (live trading would go through Kraken). All three runs
-cover the same fixed 700 days, 2024-08-06 to 2026-07-07, which ends where the
+cover the same fixed 701 days, 2024-08-06 to 2026-07-07, which ends where the
 research data ends. The signal data (taker volume, funding) also comes from
 Binance's public API, fetched once per alpha in prepare().
 """

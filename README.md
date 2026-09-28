@@ -13,8 +13,8 @@ the full research trail, including the ideas that failed.
 
 - A research protocol that can fail: development, gate and lockbox windows in
   time order, a registry of all 53 configurations tried, deflated Sharpe
-  ratios, a lockbox opened once, and a second version registered in the
-  repository before it was tested.
+  ratios that charge for the 48 research ones, a lockbox opened once, and a
+  second version registered in the repository before it was tested.
 - A survivorship check on its own result. The original coin list, the 150
   most-traded pairs of July 2026, only held survivors: 46% of the historical
   top-100 universe was missing from it. Rebuilt from Binance's public archive
@@ -24,10 +24,11 @@ the full research trail, including the ideas that failed.
   are the days the price runs away, which costs Orderflow 43% of its price
   P&L on dev. Under a square-root impact model its edge is mostly gone by $1M.
 - An edge that holds up on the full universe on dev and gate: funding carry
-  weighted by rank on perp prices, Sharpe 1.76 and 2.41. The second version of
+  weighted by rank on perp prices, Sharpe 1.70 and 2.41. The second version of
   the book is built on it and has a monthly forward test.
-- A tested library, a backtester that cannot look ahead, and a report whose
-  every number is checked against the notebooks before it is written.
+- A tested library, a backtester that lags every weight by a day, and a report
+  that is rebuilt from the notebooks' saved results and stops if a headline
+  number disagrees with them.
 
 ## Results at a glance
 
@@ -37,14 +38,18 @@ the full research trail, including the ideas that failed.
 | Frozen book, walk-forward, every pair | -0.25 | +1.87 | +0.36 | -0.91 |
 | Frozen book, equal weight, research coin list | +1.68 | +2.90 | +1.23 | +0.63 |
 | Frozen book, equal weight, every pair | +0.78 | -1.46 | -0.62 | +1.26 |
-| v2 book, every pair | +1.39 | +1.12 | not run | from 2026-09-28 |
-| v2 Carry sleeve, every pair | +1.76 | +2.41 | not run | from 2026-09-28 |
+| v2 book, every pair | +1.36 | +1.11 | not run | from 2026-09-28 |
+| v2 Carry sleeve, every pair | +1.70 | +2.41 | not run | from 2026-09-28 |
 
 Dev is 2020-01 to 2024-07, the gate 2024-08 to 2025-06, the lockbox 2025-07 to
-2026-07 and the forward window 2026-07-07 to 2026-09-26. "Every pair" is the
-daily top 100 chosen from all Binance pairs, delisted ones included. v2 is
-never run on the lockbox or the forward window, which had both been seen
-before it was written.
+2026-07 and the forward window 2026-07-07 to 2026-09-26. The walk-forward book
+needs 756 days of history, so its dev figure covers 2021-10 to 2024-07; over
+those dates the equal-weight book's is +0.46. "Every pair" is the daily top
+100 chosen from all Binance pairs, delisted ones included. v2 is never run on
+the lockbox or the forward window, which had both been seen before it was
+written. Its figures include a measurement fix made after its first run and
+before its test began (see v2 below); as first run they were +1.39 and +1.12,
+and +1.76 and +2.41 for Carry.
 
 ## How the research was run
 
@@ -54,16 +59,22 @@ before it was written.
   delisted ones included.
 - Each day's universe is the 100 most liquid coins as of the previous day, so
   no backtest trades a coin it could not have known about.
-- Weights set at the close of day t earn day t+1's return, and every trade is
-  charged: 20 bps for the momentum sleeves (market orders), 7 bps for the
-  others (limit orders).
+- Weights set at the close of day t earn day t+1's return, and trades are
+  charged 20 bps for the momentum sleeves (market orders) and 7 bps for the
+  others (limit orders). Two kinds of trade went uncharged in the research and
+  are charged after the fact: Seasonality's weekday/weekend resizing (report
+  appendix A) and the pairs engine's trades at its rebalance dates (section
+  5.6).
 - The history is split in time, roughly 70/15/15, the usual train, validation
   and test split. Parameters were chosen on a development window (2020-01 to
-  2024-07) and checked on a gate window (2024-08 to 2025-06). The lockbox year
-  (2025-07 to 2026-07) was run once, in notebook 06, after every choice had
-  been made.
-- Every configuration tried is in a trial registry, 53 in all, and the
-  deflated Sharpe ratio accounts for them.
+  2024-07) and screened on a gate window (2024-08 to 2025-06), which also
+  decided between configs that passed both, so the gate is not a clean
+  hold-out. The lockbox year (2025-07 to 2026-07) was run once, in notebook
+  06, after every choice had been made; notebooks 07, 08 and 11 re-score the
+  same frozen book on it after the fact and say so.
+- Every configuration tried is in a trial registry: 48 research configs,
+  which the deflated Sharpe ratio charges for, plus the two combination rules
+  and the three v2 rows, 53 in all.
 
 ## The book on the original coin list
 
@@ -88,8 +99,9 @@ On the lockbox the walk-forward book had a Sharpe of 1.46, an alpha of 9.5% a
 year (Newey-West t = 1.25) and a beta to BTC of -0.02. Its deflated Sharpe was
 0.20, far below 0.95, so the result was never statistically proven, and the
 checks below show that most of it came from the coin list. Report section 4
-splits every number by window and explains why the alphas look large:
-momentum's is mostly market timing, and Carry runs at about 31% volatility.
+splits every number by window, and sections 2 and 4 explain why the alphas
+look large: momentum's is mostly market timing, and Carry runs at about 31%
+volatility.
 
 ## Making it realistic
 
@@ -102,8 +114,8 @@ the same frozen book one fix at a time (report section 5):
 | Same list, archive data | +1.45 | +1.23 |
 | Pegged assets and tokenized stocks out | +1.26 | +1.20 |
 | Every pair, delisted coins included | +0.36 | -0.62 |
-| and Carry on perp prices | +0.02 | -0.46 |
-| and limit orders that have to fill | +0.14 | -0.69 |
+| and Carry on perp prices | +0.09 | -0.47 |
+| and limit orders that have to fill | +0.17 | -0.69 |
 
 The research coin list, picked by volume in July 2026, left out 46% of the
 historical universe (EOS, MATIC, XMR, VET, SAND and many more), and the coins
@@ -115,6 +127,13 @@ Notebook 05's hourly reversal, rerun on every pair, has a bigger gross
 edge, about equal to its trading cost, but still loses money after costs in
 every configuration.
 
+Two fixes came after the first run of notebook 11. The perp data leaves out
+days a contract trades more than 20% away from spot, and the first run counted
+a held coin's return on those days as zero, which dropped crash days such as
+LUNA's and FTT's; Carry now gets the coin's spot move on them. And the pairs
+baseline picked its pairs with the close of the day whose return they then
+earned; picking them a day earlier moves its dev Sharpe from -0.40 to -0.37.
+
 Adding the 82-day forward test (notebook 08) to the lockbox year, the frozen
 book's whole out-of-sample record is a Sharpe of 0.37 over 453 days.
 
@@ -123,15 +142,20 @@ book's whole out-of-sample record is a Sharpe of 0.37 over 453 days.
 Notebook 10 registers a second version in the repository before testing it:
 Orderflow plus a Carry sleeve weighted by rank and measured on perp prices, on
 every pair, with equal weights and no Seasonality. On dev and gate it has a
-Sharpe of 1.39 and 1.12, nearly all from Carry (1.76 and 2.41); its Orderflow
-sleeve fails the gate (-0.78). Its test is every day from 2026-09-28, and
-notebook 12 adds each month next to the frozen book.
+Sharpe of 1.36 and 1.11, nearly all from Carry (1.70 and 2.41); its Orderflow
+sleeve fails the gate (-0.78). These figures include a measurement fix made
+after v2's first run and before its test began, the same one as above: Carry
+gets a held coin's spot move on the days its perp data is left out. As first
+run they were 1.39 and 1.12 (Carry 1.76 and 2.41), and the registry keeps
+those. Its test is every day from 2026-09-28, and notebook 12 adds each month
+next to the frozen book.
 
 ## What worked and what didn't
 
 - Funding carry weighted by rank and measured on perp prices holds up across
-  every pair on dev and gate (Sharpe 1.76 and 2.41). With z-score weights it
-  piles into crashing coins and loses (report section 6.1 has one case).
+  every pair on dev and gate (Sharpe 1.70 and 2.41). With z-score weights it
+  piles into single crashing coins (report section 6.1 has DEXE) and loses on
+  every pair (section 5.2).
 - Following the 10-day taker-buy imbalance looked best on the research coin
   list (lockbox +1.95), but on every pair it loses on the gate and the
   lockbox.
@@ -144,7 +168,10 @@ notebook 12 adds each month next to the frozen book.
   lookback) but costs 461% a year against a 272% gross return.
   On every pair the gross edge grows to about the size of the cost, and every
   configuration still loses after costs.
-- Equal weight beat walk-forward weights on every window except the lockbox.
+- On the research coin list, equal weight beat walk-forward weights on every
+  window except the lockbox, though on dev only by 0.46 to 0.40 once both
+  cover the same dates. On every pair, walk-forward did better on the gate and
+  the lockbox.
 - Run in twsq on 20 large coins, the frozen book's three sleeves are close to flat
   (Sharpe +0.07, -0.15 and +0.22).
 
@@ -185,7 +212,8 @@ reports/
   REPORT.pdf              the written report
 ```
 
-`data/` is not in the repository; notebook 00 rebuilds it.
+`data/` is not in the repository; notebooks 00, 08 and 09 download it (see
+below for what can be rebuilt exactly).
 
 ## Reproducing
 
@@ -197,7 +225,7 @@ uv pip install --python .venv -r requirements.txt
 # tests
 for f in tests/test_*.py; do .venv/bin/python "$f"; done
 
-# notebooks, in order
+# notebooks, in order, on a fresh copy (read the notes below first)
 for nb in 00_data 01_baselines 02_seasonality 03_orderflow 04_carry 05_fastrev 06_portfolio 07_posthoc \
           08_forward 09_archive_data 10_v2 11_realism 12_forward_log; do
   .venv/bin/jupytext --to notebook notebooks/$nb.py
@@ -210,11 +238,14 @@ done
 
 Things to know before rerunning:
 
-- Notebook 00 downloads from Binance's global API, which refuses connections
-  from US IP addresses. The data in this project was fetched on 2026-07-06.
-  `END` in notebook 00 pins the sample to that date, but a new fetch picks the
-  top 150 pairs by volume on the day it runs, so the universe, and the
-  numbers, can differ a little.
+- The research data was fetched by notebook 00 on 2026-07-06, from Binance's
+  global API, and is cached under `data/raw/`; the report's checks are pinned
+  to it. Notebook 00 reads that cache and only downloads again with
+  `FORCE = True`. `END` pins the sample and `quantlib.data.RESEARCH_COINS`
+  pins the coin list, but a new download may still differ: the API refuses US
+  IP addresses, and a pair Binance has since removed may no longer be served.
+  Notebook 09 rebuilds the same coin list from the public archive, which keeps
+  delisted pairs, and gets the book's lockbox Sharpe to within 0.01.
 - Notebook 08 downloads 2026-05-01 to 2026-09-26 for the same coins (the dates
   are pinned) and caches it under `data/raw/forward_*`. It checks the overlap
   with the cached data before using anything new.
@@ -225,8 +256,11 @@ Things to know before rerunning:
   record before the next month's data exists.
 - The trial registry (`data/processed/trial_registry.csv`) skips configs it
   already holds, so rerunning a notebook does not add trials. It has 48
-  research rows, the two combination rules and three v2 rows; notebook 06
-  expects exactly 48 research rows.
+  research rows, the two combination rules and three v2 rows.
+- Notebook 06 opens the lockbox. Before logging the two combination rules it
+  checks that the registry holds exactly 48 rows, the research trials of
+  notebooks 01 to 05, so it runs once, on a fresh registry, and stops if run
+  again.
 - The twsq alphas run in a separate environment; see `alphas/README.md`.
 
 The notebooks are stored as paired `.py` files (jupytext) for readable diffs;
