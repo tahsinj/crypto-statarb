@@ -28,7 +28,8 @@ the full research trail, including the ideas that failed.
   the book is built on it and has a monthly forward test.
 - A tested library, a backtester that lags every weight by a day, and a report
   that is rebuilt from the notebooks' saved results and stops if a headline
-  number disagrees with them.
+  number, in it or in this README, disagrees with them. `check.py` runs every
+  check in one command.
 
 ## Results at a glance
 
@@ -208,6 +209,7 @@ notebooks/
   12_forward_log          the monthly out-of-sample record, frozen book and v2
 alphas/                   the three sleeves as twsq alphas, with backtest CSVs
 tests/                    look-ahead, neutrality, cost and fetch tests
+check.py                  every check in one command
 reports/
   build_report.py         builds REPORT.pdf and checks its numbers
   REPORT.pdf              the written report
@@ -233,8 +235,13 @@ for nb in 00_data 01_baselines 02_seasonality 03_orderflow 04_carry 05_fastrev 0
   .venv/bin/jupyter nbconvert --to notebook --execute --inplace notebooks/$nb.ipynb
 done
 
-# report (stops without writing the PDF if a number disagrees with the notebooks)
+# report (stops without writing the PDF if a number in it or in a README
+# disagrees with the notebooks)
 .venv/bin/python reports/build_report.py
+
+# every check in one command: the tests, the notebook pairs, the report's and
+# READMEs' numbers, and that REPORT.pdf is what the code and data give
+.venv/bin/python check.py
 ```
 
 Things to know before rerunning:
