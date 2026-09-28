@@ -1265,8 +1265,9 @@ def build_pdf(d: dict, v: dict, figs: dict) -> int:
         f"{of_fill['price P&L, every order filled'] * 100:.0f} points of price P&L on dev, and its dev "
         f"Sharpe falls from {st[('3 carry on perps', 'orderflow')]['Dev']:.2f} to "
         f"{st[('4 limit fills', 'orderflow')]['Dev']:.2f}. Carry trades less and loses less. A Carry "
-        "order cannot fill on a contract whose perp data has dropped out, so such a position keeps "
-        "that day's spot move and is then treated as settled at its last price, as a delisted perp is."
+        "order cannot fill on a contract whose perp data has dropped out, so such a position keeps the "
+        "coin's spot move on that day and on the day the contract trades again; if it never comes "
+        "back, the position is treated as settled at its last price, as a delisted perp is."
     )
     pdf.h2("5.4 Size and capacity")
     pdf.body("The same Orderflow rule on the largest coins and on the smaller ones shows where the "

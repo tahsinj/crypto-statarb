@@ -70,8 +70,9 @@ and +1.76 and +2.41 for Carry.
   2024-07) and screened on a gate window (2024-08 to 2025-06), which also
   decided between configs that passed both, so the gate is not a clean
   hold-out. The lockbox year (2025-07 to 2026-07) was run once, in notebook
-  06, after every choice had been made; notebooks 07, 08 and 11 re-score the
-  same frozen book on it after the fact and say so.
+  06, after every choice had been made; notebooks 07 and 11 re-score the same
+  frozen book on it after the fact and say so, and notebook 08 reruns it as a
+  check.
 - Every configuration tried is in a trial registry: 48 research configs,
   which the deflated Sharpe ratio charges for, plus the two combination rules
   and the three v2 rows, 53 in all.
@@ -242,8 +243,9 @@ Things to know before rerunning:
   global API, and is cached under `data/raw/`; the report's checks are pinned
   to it. Notebook 00 reads that cache and only downloads again with
   `FORCE = True`. `END` pins the sample and `quantlib.data.RESEARCH_COINS`
-  pins the coin list, but a new download may still differ: the API refuses US
-  IP addresses, and a pair Binance has since removed may no longer be served.
+  pins the coin list, but a new download cannot match the cache exactly: its
+  last day would be complete rather than partial, a pair Binance has since
+  removed may no longer be served, and the API refuses US IP addresses.
   Notebook 09 rebuilds the same coin list from the public archive, which keeps
   delisted pairs, and gets the book's lockbox Sharpe to within 0.01.
 - Notebook 08 downloads 2026-05-01 to 2026-09-26 for the same coins (the dates
@@ -253,7 +255,9 @@ Things to know before rerunning:
   the first time (around an hour), cached under `data/raw/archive/`.
 - Notebook 12 is the forward log. Once a month, set `END` to the last
   complete UTC day, run it and commit it, so each month's numbers are on
-  record before the next month's data exists.
+  record before the next month's data exists. If the archive has not
+  published a day yet, the notebook stops before logging anything; run it
+  again a day later.
 - The trial registry (`data/processed/trial_registry.csv`) skips configs it
   already holds, so rerunning a notebook does not add trials. It has 48
   research rows, the two combination rules and three v2 rows.
