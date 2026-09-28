@@ -91,7 +91,8 @@ def run(
     )
 
 
-def fill_gap_starts(returns: pd.DataFrame, fallback: pd.DataFrame) -> pd.DataFrame:
+def fill_gap_starts(returns: pd.DataFrame, fallback: pd.DataFrame,
+                    price: pd.DataFrame | None = None) -> pd.DataFrame:
     """``returns`` with the first day of each run of missing values taken from ``fallback``.
 
     Made for perp returns, which the every-pair panels drop on days a contract
@@ -101,9 +102,15 @@ def fill_gap_starts(returns: pd.DataFrame, fallback: pd.DataFrame) -> pd.DataFra
     same gap stay missing, so a position that cannot be closed (run_limit_fills
     needs a bar to fill) is treated as settled at its last price, which is what
     happens to a delisted perp.
+
+    With ``price`` (the same panel's prices), a day the contract trades again
+    but has no return yet, because its previous close was dropped, takes the
+    fallback too: a position still open then moved with it.
     """
-    first = returns.isna() & returns.shift(1).notna()
-    return returns.fillna(fallback.reindex_like(returns).where(first))
+    fill = returns.isna() & returns.shift(1).notna()
+    if price is not None:
+        fill |= returns.isna() & price.reindex_like(returns).notna()
+    return returns.fillna(fallback.reindex_like(returns).where(fill))
 
 
 def run_limit_fills(

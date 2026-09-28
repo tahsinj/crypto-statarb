@@ -158,7 +158,7 @@ def max_capacity(cap: pd.DataFrame, sharpe_floor_frac: float = 0.5) -> float:
 
 def regime_table(returns: pd.Series, regime: pd.Series) -> pd.DataFrame:
     """Sharpe / ann return / vol / n by regime bucket (regime aligned to returns)."""
-    df = pd.concat([returns.rename("r"), regime.rename("regime")], axis=1).dropna()
+    df = pd.concat([returns.rename("r"), regime.rename("regime")], axis=1, sort=True).dropna()
     rows = {}
     for label, grp in df.groupby("regime", observed=True):
         r = grp["r"]

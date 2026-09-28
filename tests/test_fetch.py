@@ -313,6 +313,17 @@ def test_perp_data_dropped_when_it_stops_tracking_spot():
     assert data.contract_size("1000SATS", "1000SATS") == 1 and data.contract_size("LUNA2", "LUNA") == 1
 
 
+def test_short_days_flags_days_not_yet_published():
+    idx = pd.date_range("2026-10-01", periods=12)
+    cols = pd.MultiIndex.from_product([[f"C{i}" for i in range(50)], ["price", "volume"]])
+    raw = pd.DataFrame(1.0, index=idx, columns=cols)
+    raw.loc[idx[:4], [(f"C{i}", "price") for i in range(40, 50)]] = np.nan   # ten coins listed on 10-05
+    raw.loc[idx[8], [(f"C{i}", "price") for i in range(3)]] = np.nan          # 10-09: three delisted, a normal day
+    raw.loc[idx[-1]] = np.nan                               # 10-12: rows written, no bars yet
+    short = fetch.short_days(raw, "2026-10-01", "2026-10-13")  # 10-13: not in the data at all
+    assert list(short.index) == list(pd.to_datetime(["2026-10-12", "2026-10-13"])) and (short == 0).all()
+
+
 def test_leveraged_tokens_and_perp_names():
     bases = {"BTC", "ETH", "JUP", "SYRUP", "BTCUP", "ETHDOWN", "BULL", "SHIB", "SATS", "1000SATS"}
     flagged = {b for b in bases if data.is_leveraged_token(b, bases)}
@@ -326,6 +337,7 @@ if __name__ == "__main__":
                test_read_archive_klines_both_layouts, test_read_archive_funding_daily_sum,
                test_archive_keys_daily_files_only_for_live_pairs, test_archive_list_follows_pages,
                test_archive_download_quotes_non_ascii_names, test_archive_panels_join_contracts_without_a_fake_return,
-               test_perp_data_dropped_when_it_stops_tracking_spot, test_leveraged_tokens_and_perp_names]:
+               test_perp_data_dropped_when_it_stops_tracking_spot, test_short_days_flags_days_not_yet_published,
+               test_leveraged_tokens_and_perp_names]:
         fn()
         print(f"ok {fn.__name__}")

@@ -461,6 +461,21 @@ def fetch_archive(
     return df.sort_index(axis=1)
 
 
+def short_days(raw: pd.DataFrame, start: str, end: str, frac: float = 0.9, lookback: int = 7) -> pd.Series:
+    """Bar counts on the days in [start, end] with bars for fewer than ``frac`` of the pairs of the best recent day.
+
+    ``raw`` is a (symbol, field) frame from fetch_archive. Each day's count is
+    compared with the most the archive had on any of the ``lookback`` days
+    before it, so a day it has not published yet, or has published only in
+    part, shows up here, while new listings and a batch of delistings do not.
+    The first ``lookback`` days of the window only serve as that comparison.
+    The archive has published a day late before (the 2026-09-26 perp bars).
+    """
+    n = raw.xs("price", axis=1, level=1).notna().sum(axis=1).reindex(pd.date_range(start, end), fill_value=0)
+    best = n.rolling(lookback, min_periods=lookback).max().shift(1)
+    return n[n < frac * best]
+
+
 def fetch_yahoo(
     symbols: list[str],
     start: str = "2018-01-01",

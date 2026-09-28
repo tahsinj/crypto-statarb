@@ -199,6 +199,19 @@ def test_fill_gap_starts_fills_only_the_first_missing_day():
     assert out.iloc[3:5].isna().all() and out.iloc[5] == 0.02 and out.iloc[6] == 0.4
 
 
+def test_fill_gap_starts_with_price_fills_the_day_a_contract_is_back():
+    idx = pd.date_range("2024-01-01", periods=6)
+    # the contract's close on day 3 is dropped, so days 3 and 4 have no return;
+    # a delisted one (column B) has no price after day 2
+    price = pd.DataFrame({"A": [1.0, 1.1, np.nan, 1.2, 1.3, 1.4], "B": [1.0, 1.1, np.nan, np.nan, np.nan, np.nan]},
+                         index=idx)
+    perp = price.pct_change()
+    spot = pd.DataFrame(0.05, index=idx, columns=["A", "B"])
+    out = backtest.fill_gap_starts(perp, spot, price=price)
+    assert out["A"].iloc[2] == 0.05 and out["A"].iloc[3] == 0.05     # the gap day and the day it is back
+    assert out["B"].iloc[2] == 0.05 and out["B"].iloc[3:].isna().all()  # delisted: settled after the first day
+
+
 def test_impact_grows_with_size_and_with_small_volume():
     p = _toy_panels()
     rets = p["returns"]

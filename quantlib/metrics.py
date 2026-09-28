@@ -203,7 +203,7 @@ def alpha_beta(
     fnames = list(names) if names is not None else [f"x{i}" for i in range(len(factors))]
     df = pd.concat(
         [returns.rename("y")] + [f.rename(nm) for f, nm in zip(factors, fnames)],
-        axis=1,
+        axis=1, sort=True,
     ).dropna()
     if df.empty:
         return {}
