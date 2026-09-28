@@ -211,17 +211,19 @@ pd.DataFrame({"gaps left at zero (first run)": by_window(no_fill), "spot move on
 # Orderflow uses spot bars and Carry perp bars. A missed order is replaced
 # at the next close, so positions lag their targets on exactly the days the
 # price runs away. An order cannot fill on a contract whose perp data has
-# dropped out, so a Carry position there stays on the books: it keeps the
-# spot move of the day the data drops out, as in step 3, and is then treated
-# as settled at its last price (`backtest.fill_gap_starts`), which is what
-# happens to a delisted perp.
+# dropped out, so a Carry position there stays on the books. It keeps the
+# coin's spot move on the day the data drops out, as in step 3, and on the
+# day the contract trades again, whose return needs the dropped close. If
+# the contract never comes back, the position is treated as settled at its
+# last price, which is what happens to a delisted perp
+# (`backtest.fill_gap_starts`).
 
 # +
 w_of = strategies.orderflow_weights(A["taker_imbalance"], uni2)
 of4, held_of = backtest.run_limit_fills(w_of, A["returns"], A["price"], A["high"], A["low"], cost_bps=7.0)
 w_ca = strategies.carry_weights(fund2, uni2)
 perp_px, perp_hi, perp_lo = (A[k].reindex(columns=uni2.columns) for k in ["perp_price", "perp_high", "perp_low"])
-perp_filled = backtest.fill_gap_starts(perp_returns, spot_r)
+perp_filled = backtest.fill_gap_starts(perp_returns, spot_r, price=perp_px)
 ca4, held_ca = backtest.run_limit_fills(w_ca, perp_filled, perp_px, perp_hi, perp_lo, cost_bps=7.0)
 carry4 = ca4.net_returns - (held_ca * fund2).sum(axis=1).reindex(ca4.net_returns.index)
 s4 = s3.assign(orderflow=of4.net_returns.reindex(s3.index), carry=from_funding_start(carry4.reindex(s3.index)))

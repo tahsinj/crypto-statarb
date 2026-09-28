@@ -141,7 +141,7 @@ of[["config", "dev_sharpe", "gate_sharpe", "note"]]
 # that is already negative: all six conditioned configs are negative on both
 # windows. No P1 survivor.
 #
-# **P2.** The unconfirmed-move mask keeps about half of the cross-section but
+# **P2.** The unconfirmed-move mask keeps about 40% of the cross-section but
 # does not change the result: lb=3 dev -0.22, gate -0.34; lb=5 dev -0.86,
 # gate -0.11. Both are negative on dev. With no reversal edge left at 7 bps,
 # filtering on flow disagreement has nothing to work with. No P2 survivor.

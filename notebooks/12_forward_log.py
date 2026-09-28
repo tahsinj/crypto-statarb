@@ -18,7 +18,8 @@
 # The running out-of-sample record, extended once a month. To update it, set
 # END to the last complete UTC day, run the notebook and commit it. The
 # commit dates then show each month's numbers were written down before the
-# next month's data existed.
+# next month's data existed. If the archive has not published a day yet, the
+# notebook stops before logging anything; run it again a day later.
 #
 # Nothing here is tuned. Three records are kept:
 #
@@ -87,6 +88,21 @@ if pd.Timestamp(END) > pd.Timestamp(BASE_END):
                            lambda: fetch.fetch_archive("um", sorted(p + "USDT" for p in perp_names), start, END,
                                                        ARCHIVE, workers=24),
                            max_age_days=float("inf"))
+
+    # The archive sometimes publishes a day late (the 2026-09-26 perp bars did).
+    # Stop, and drop this run's caches so the next run downloads again, if any
+    # new day is short of bars; otherwise a late day would be logged half-empty
+    # and quietly revised by the next month's run.
+    short = {}
+    for name, raw in [("spot", new_spot), ("perp", new_um)]:
+        s = fetch.short_days(raw, start, END)
+        s = s[s.index > pd.Timestamp(BASE_END)]
+        if len(s):
+            short[name] = [d.date() for d in s.index]
+    if short:
+        for f in RAW.glob(f"log_*_{END}.pkl.zip"):
+            f.unlink()
+        raise RuntimeError(f"the archive is short of bars on {short}; run again once it has published them")
     fund_names = sorted(set(perp_names) | set(rl["funding"].columns))
 
     def archive_funding() -> pd.DataFrame:

@@ -67,7 +67,7 @@ print(f"{len(coins) - len(missing)} of {len(coins)} coins returned new data; mis
 last_trade = {c: research_raw[c]["price"].dropna().index.max().date() for c in missing}
 print("last close in the research data for the missing coins:", last_trade)
 
-# The coins with no new data had all stopped trading on Binance before April
+# The coins with no new data had all stopped trading on Binance by mid-April
 # 2026, so nothing tradable is lost. Coins listed after July are not added:
 # the coin list stays the one the research used.
 

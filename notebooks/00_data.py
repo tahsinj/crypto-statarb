@@ -15,8 +15,8 @@
 #
 # Windows used throughout: development 2020-01 to 2024-07, gate 2024-08 to
 # 2025-06, lockbox 2025-07 to the end of the data. Notebook 06 opens the
-# lockbox; notebooks 07, 08 and 11 re-score the frozen book on it afterwards
-# and say so.
+# lockbox; notebooks 07 and 11 re-score the frozen book on it afterwards and
+# say so, and notebook 08 reruns it as a check before the forward window.
 #
 # The cached data in this project was fetched on 2026-07-06 at about 15:20
 # UTC, so the last day in each panel (2026-07-06) is a partial day. `END` pins
@@ -25,8 +25,9 @@
 # in `data.RESEARCH_COINS`: the top 150 pairs by volume that day, of which 149
 # returned data. The cache never expires, so a rerun reads it, and only
 # `FORCE = True` downloads again. A new download asks for the same coins but
-# may not match the cache: the API refuses US IP addresses, and a pair Binance
-# has since removed may no longer be served.
+# cannot match the cache exactly: its last day would be complete rather than
+# partial, a pair Binance has since removed may no longer be served, and the
+# API refuses US IP addresses.
 
 from pathlib import Path
 
