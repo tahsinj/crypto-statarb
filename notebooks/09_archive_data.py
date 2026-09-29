@@ -103,6 +103,14 @@ perp_keep = sorted(p + "USDT" for p in perp_names)
 raw_um = fetch.refresh(RAW / "archive_um_1d.pkl.zip",
                        lambda: fetch.fetch_archive("um", perp_keep, "2019-09-01", END, ARCHIVE, workers=24),
                        max_age_days=float("inf"))
+# about 50 monthly perp files miss a few days (the last three of February
+# 2022, the first two of April 2022), while the daily files for those days exist
+um_holes = fetch.refresh(RAW / "archive_um_1d_holes.pkl.zip",
+                         lambda: fetch.fill_short_days("um", raw_um, "2020-01-01", END, ARCHIVE, workers=24),
+                         max_age_days=float("inf"))
+print("perp bars taken from daily files:",
+      {d.date(): int(n) for d, n in um_holes.xs("price", axis=1, level=1).notna().sum(axis=1).items()})
+raw_um = raw_um.combine_first(um_holes)
 
 fund_pairs = set(fetch.archive_pairs("funding"))
 fund_keep = [p for p in perp_keep if p in fund_pairs]
@@ -158,6 +166,11 @@ print("spot:", raw_spot.shape, raw_spot.index.min().date(), "->", raw_spot.index
 print("perps:", raw_um.shape, raw_um.index.min().date(), "->", raw_um.index.max().date())
 print(f"funding: {funding_perp.shape}, archive files to {last_file_day.date()}, API after that for {len(live)} live "
       f"perps and for 2019 for {len(early)}")
+# no day may be short of bars across the market (a file missing, or published late)
+for name, raw, first in [("spot", raw_spot, "2018-01-01"), ("perps", raw_um, "2020-01-01")]:
+    short = fetch.short_days(raw, first, END)
+    print(f"{name}: days short of bars: {[d.date() for d in short.index]}")
+    assert short.empty
 # -
 
 # ## Check against the research data

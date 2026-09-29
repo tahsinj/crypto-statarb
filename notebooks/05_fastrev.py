@@ -120,7 +120,9 @@ print(fr[["config", "dev_sharpe", "gate_sharpe"]])
 # 2020-2021 lean toward survivors. The daily-universe mask keeps dead and
 # small coins out of the books, but early breadth is still thin.
 #
-# **Grid** (dev window 2020-06-01 to 2024-07-31, 8,760 hours a year):
+# **Grid** (dev window 2020-06-01 to 2024-07-31, 8,760 hours a year; the
+# cost column takes its turnover over dev and gate together, which moves it
+# by well under 1%: 461% against 463% on dev alone for the 4-hour config):
 #
 #   lb=4,  rb=1: gross Sharpe +4.83, gross +272%/yr, drag 461%/yr, ratio 0.59, fails
 #   lb=4,  rb=6: gross Sharpe +0.86, gross +44%/yr,  drag 146%/yr, ratio 0.30, fails

@@ -220,6 +220,13 @@ print(f"{len(survivors)} config(s) beat baseline on both windows")
 # on dev, so under the rule above it would not have been selected. The sleeve
 # is left as it was frozen; notebook 07 re-scores the book with the charged
 # version.
+#
+# **Added later (see notebook 07, section 5).** P2 and P3 held each bucket a
+# day late, P3 an hour late: `held = m.shift(1)` holds day t when day t-1 was
+# in the bucket, but the calendar is known in advance, so "weekday" held
+# Tuesday to Saturday. On the days they meant, all four still fail the rule
+# above, so the choice of survivor stands. The numbers above and in the
+# registry are as run.
 
 best = signals.seasonal_scale(mom, weekend=1.0, weekday=0.5)
 best.rename("seasonality").to_frame().to_parquet(PROC / "sleeve_seasonality.parquet")

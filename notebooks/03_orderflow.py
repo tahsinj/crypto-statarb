@@ -75,8 +75,8 @@ for lb in [3, 5, 10]:
     base[lb] = (net, d, g)
 pd.DataFrame({lb: v[1:] for lb, v in base.items()}, index=["dev", "gate"]).T.round(2)
 
-# Conditioned: trade the same signal only in names whose trailing volume
-# z-score (shifted, so it uses data through t-1) is below the threshold.
+# Conditioned: trade the same signal only in names whose volume z-score (day
+# t's volume against a mean and std through t-1) is below the threshold.
 
 volz = signals.rolling_zscore(dvol, window=60)
 p1 = {}

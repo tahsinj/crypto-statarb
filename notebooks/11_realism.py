@@ -21,10 +21,11 @@
 # and walk-forward settings. Like notebook 07, this re-scores the lockbox
 # year with corrected inputs; it changes nothing in the book and chooses
 # nothing. v2's rules were committed before this notebook was first run, so
-# none of it feeds into them. One thing found after that first run changed
-# how v2 is measured, not what it trades: Carry now keeps a coin's spot move
-# on the days its perp data is dropped (step 3 and the last section). No
-# trials are logged.
+# none of it feeds into them. Two things found after that first run change
+# v2's numbers but not its rules: Carry now keeps a coin's spot move on the
+# days its perp data is dropped, and two holes in the archive's 2022 files
+# are filled, which gives Carry funding data it lacked on those days (step
+# 3, notebook 09 and the last section). No trials are logged.
 #
 # The steps build on each other:
 #
@@ -183,7 +184,9 @@ pd.DataFrame(gate_rows).T
 # The perp panels drop a contract's data on days it trades more than 20% away
 # from spot (notebook 09). A coin Carry holds on such a day keeps its spot
 # move for the day (`fallback_returns`). The first run of this notebook left
-# those days at zero, which dropped the moves of a few crash days.
+# those days at zero, which dropped the moves of a few crash days. (Two holes
+# in the archive's own files, about 50 perps missing on 2022-02-26 to 02-28
+# and 2022-04-01 to 04-02, are filled from its daily files in notebook 09.)
 
 perp_returns = A["perp_returns"].reindex(columns=uni2.columns)
 s3 = s2.assign(carry=from_funding_start(strategies.carry_sleeve(fund2, perp_returns, uni2,
@@ -201,7 +204,7 @@ gap_pnl = (held3 * spot_r).where(gap).stack().dropna()
 print(f"held coin-days with no perp return: {len(gap_pnl)}, their spot P&L {gap_pnl.sum():+.3f}")
 print(gap_pnl.sort_values().head(6).round(3).to_string())
 no_fill = from_funding_start(strategies.carry_sleeve(fund2, perp_returns, uni2))
-pd.DataFrame({"gaps left at zero (first run)": by_window(no_fill), "spot move on gaps": by_window(s3["carry"])}).T.round(2)
+pd.DataFrame({"gaps left at zero": by_window(no_fill), "spot move on gaps": by_window(s3["carry"])}).T.round(2)
 # -
 
 # ## Step 4: limit orders that have to be filled
@@ -213,10 +216,11 @@ pd.DataFrame({"gaps left at zero (first run)": by_window(no_fill), "spot move on
 # price runs away. An order cannot fill on a contract whose perp data has
 # dropped out, so a Carry position there stays on the books. It keeps the
 # coin's spot move on the day the data drops out, as in step 3, and on the
-# day the contract trades again, whose return needs the dropped close. If
-# the contract never comes back, the position is treated as settled at its
-# last price, which is what happens to a delisted perp
-# (`backtest.fill_gap_starts`).
+# day the contract trades again, whose return needs the dropped close
+# (`backtest.fill_gap_starts`). A contract with no bar for more than three
+# days is treated as delisted: the position is settled at its last price and
+# dropped (`backtest.run_limit_fills`), so a relaunch under the same name,
+# like LUNA's in 2022, does not bring it back.
 
 # +
 w_of = strategies.orderflow_weights(A["taker_imbalance"], uni2)
@@ -238,7 +242,7 @@ for name, w, held, rets, close, hi, lo in [
     missed = (target - held).where(traded)                       # a coin with no bar cannot fill at all
     r, sl = rets.reindex_like(held), WINDOWS["dev"]
     fills[name] = {
-        "filled share of orders": held.diff().abs().loc[sl].sum().sum()
+        "filled share of orders": held.diff().abs().where(traded).loc[sl].sum().sum()   # settling is not a fill
                                   / (target - held.shift(1)).abs().where(traded).loc[sl].sum().sum(),
         "missed share of positions": missed.abs().loc[sl].sum().sum() / target.abs().where(traded).loc[sl].sum().sum(),
         "return where a buy missed": r.where(missed > 1e-9).loc[sl].stack().mean(),
@@ -429,11 +433,12 @@ pd.DataFrame(beta_rows).T.round(3)
 # ## v2 re-measured, dev and gate only
 #
 # v2's Carry sleeve, as registered and first run in notebook 10, has the same
-# gap as step 3. Its test uses `v2_sleeves(spot_fallback=True)` from its
-# first day, 2026-09-28, so here are its dev and gate numbers with the fix.
-# The data is cut at the end of the gate first, as in notebook 10, so v2 is
-# still never run on the lockbox or the forward window. Without the fix the
-# same code has to give notebook 10's numbers exactly.
+# gap as step 3, and ran on data with the two archive holes of 2022. Its test
+# uses `v2_sleeves(spot_fallback=True)` on the filled data from its first day,
+# 2026-09-28, so here are its dev and gate numbers both ways. The data is cut
+# at the end of the gate first, as in notebook 10, so v2 is still never run
+# on the lockbox or the forward window. With the registered rules, the filled
+# data changes Carry only in the weeks after the two holes, and nothing else.
 
 # +
 cut = {k: A[k].loc[:"2025-06-30"] for k in ["returns", "taker_imbalance", "universe", "perp_returns", "funding"]}
@@ -442,11 +447,22 @@ v2_args = (cut["taker_imbalance"], cut["returns"], cut["perp_returns"].reindex(c
            cut["funding"].reindex(columns=u.columns), u)
 registered = pd.read_parquet(PROC / "v2_dev_gate.parquet")
 as_registered = strategies.v2_sleeves(*v2_args)
-assert as_registered.equals(registered[["orderflow", "carry"]])
+assert as_registered["orderflow"].equals(registered["orderflow"])
+moved = (as_registered["carry"] - registered["carry"]).abs() > 1e-12
+holes = [("2022-02-26", "2022-03-12"), ("2022-04-01", "2022-04-14")]
+in_holes = pd.Series(False, index=moved.index)
+for a, b in holes:
+    in_holes.loc[a:b] = True
+assert not (moved & ~in_holes).any(), "the filled data changed Carry outside the weeks after the holes"
+print(f"Carry days changed by the filled data: {int(moved.sum())}, from {moved[moved].index.min().date()} "
+      f"to {moved[moved].index.max().date()}")
+as_registered["v2"] = strategies.v2_book(as_registered)
 v2_fixed = strategies.v2_sleeves(*v2_args, spot_fallback=True)
 v2_fixed["v2"] = strategies.v2_book(v2_fixed)
 v2_table = pd.DataFrame({(label, col): {w: metrics.sharpe(s[col].loc[WINDOWS[w]].dropna()) for w in ["dev", "gate"]}
-                         for label, s in [("as registered", registered), ("spot move on gaps", v2_fixed)]
+                         for label, s in [("as registered, first run", registered),
+                                          ("registered rules, holes filled", as_registered),
+                                          ("holes filled, spot move on gaps", v2_fixed)]
                          for col in ["v2", "orderflow", "carry"]}).T
 v2_table.round(3)
 # -
@@ -469,21 +485,22 @@ v2_table.round(3)
 # and BNX, which it bought because their funding had turned negative.
 #
 # The other steps matter less, with one exception. Perp prices help Carry a
-# little, though less than the first run of this notebook showed. That run
-# left the 82 held coin-days with no perp return at zero, the crash days of
-# LUNA (May 2022), FTT (November 2022) and VIDT (April 2025) among them;
-# giving them the spot move takes Carry's step-3 Sharpe from 0.40 to 0.30 on
-# dev and from -1.58 to -1.72 on the gate. Limit orders that have to be
-# filled hurt Orderflow even though about 99% of what it orders fills the
-# next day. The misses are the days the price ran away: where a buy missed,
-# the coin rose 7.1% that day on average,
-# and where a sell missed it fell 5.7%. Missing 0.3% of the positions costs
-# about 30 of Orderflow's 70 points of gross P&L on dev, and its dev Sharpe
-# falls from 0.44 to 0.09. Even on the research list, most of Orderflow's
-# edge is gone at $1M under the square-root impact model (0.30 or -0.27,
-# depending on the impact coefficient, from 0.87 with none); Carry lasts to
-# somewhere between $1M and $10M. Notebook 05's hourly reversal, rerun on
-# every pair, has a larger gross edge than on its 60 coins but still loses
+# little, though less than the first run of this notebook showed. That run left
+# 82 held coin-days with no perp return at zero. 56 of them fell on two holes
+# in the archive's own 2022 files, which notebook 09 now fills from its daily
+# files; the other 26 are crash and delisting days such as LUNA's (May 2022),
+# FTT's (November 2022) and VIDT's (April 2025), which now get the coin's spot
+# move. Together the two fixes take Carry's step-3 Sharpe from 0.40 to 0.27 on
+# dev and from -1.58 to -1.72 on the gate. Limit orders that have to be filled
+# hurt Orderflow even though about 99% of what it orders fills the next day.
+# The misses are the days the price ran away: where a buy missed, the coin rose
+# 7.1% that day on average, and where a sell missed it fell 5.7%. Missing 0.3%
+# of the positions costs about 30 of Orderflow's 70 points of gross P&L on dev,
+# and its dev Sharpe falls from 0.44 to 0.09. Even on the research list, most
+# of Orderflow's edge is gone at $1M under the square-root impact model (0.30
+# or -0.27, depending on the impact coefficient, from 0.87 with none); Carry
+# lasts to somewhere between $1M and $10M. Notebook 05's hourly reversal, rerun
+# on every pair, has a larger gross edge than on its 60 coins but still loses
 # money after costs in every config. Charging the pairs baseline for its
 # rebalance trades barely moves it, and neither does picking its pairs a day
 # earlier, which removes its one-day look-ahead at each rebalance (dev -0.37
@@ -497,10 +514,10 @@ v2_table.round(3)
 # The frozen book's lockbox result came mostly from its coin list. v2
 # (notebook 10) was registered before these checks ran; it trades the
 # every-pair universe with rank-weighted Carry on perps, and its test is the
-# data from 2026-09-28 on. Its Carry sleeve had the same gap as step 3. With
-# the fix, which its test uses from the first day, v2 has a Sharpe of 1.36 on
-# dev and 1.11 on the gate (1.39 and 1.12 as registered), and its Carry 1.70
-# and 2.41 (1.76 and 2.41).
+# data from 2026-09-28 on. Its Carry sleeve had the same gaps as step 3.
+# With both fixes, which its test uses from the first day, v2 has a Sharpe of
+# 1.35 on dev and 1.11 on the gate (1.39 and 1.12 as registered), and its
+# Carry 1.69 and 2.41 (1.76 and 2.41).
 
 # ## Save for the report
 

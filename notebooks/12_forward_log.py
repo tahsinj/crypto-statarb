@@ -29,7 +29,8 @@
 # - v2 (notebook 10), from 2026-09-28, the first full day after it was
 #   registered. It runs with `spot_fallback=True`: Carry keeps a held coin's
 #   spot move on the days its perp data is dropped, a measurement fix made
-#   after v2's first run and before its test began (notebook 11).
+#   after v2's first run and before any test result was computed (notebook
+#   11).
 # - v2's two sleeves on their own, since notebook 10 found that its
 #   Orderflow sleeve fails the gate on the every-pair universe.
 #
@@ -172,6 +173,10 @@ v2 = strategies.v2_sleeves(allp["taker_imbalance"], allp["returns"],
                            allp["perp_returns"].reindex(columns=uni_v2.columns),
                            allp["funding"].reindex(columns=uni_v2.columns), uni_v2, spot_fallback=True)
 v2_book = strategies.v2_book(v2)
+# the months before V2_START are only history for v2's first positions: its
+# P&L on them is dropped here, before anything is recorded or shown
+v2, v2_book = v2.loc[V2_START:], v2_book.loc[V2_START:]
+assert v2.empty or v2.index.min() >= pd.Timestamp(V2_START)
 btc = allp["returns"]["BTC"]
 
 # ## The record

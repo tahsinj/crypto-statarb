@@ -18,7 +18,7 @@
 # Added in September 2026, after notebook 06 had opened the lockbox. Nothing
 # here changes a sleeve, a parameter or the book, and none of it is a new
 # trial, so the registry is not touched. Four questions came up when the
-# backtests were audited:
+# backtests were audited, and two more in a later review (sections 5 and 6):
 #
 # 1. The seasonality overlay halves the book on Mondays and restores it on
 #    Saturdays. `signals.seasonal_scale` scales the returns but never charges
@@ -32,6 +32,11 @@
 #    dev/gate/lockbox split is how the book was chosen and tested; this is
 #    the plain full-period view next to it, including the two baselines,
 #    which notebook 01 only ran up to the end of the gate.
+# 5. Notebook 02's P2 and P3 calendar tests held each bucket a day late (P3
+#    an hour late). How do they score on the days they meant? (dev and gate)
+# 6. Holding constant target weights takes small daily trades as positions
+#    drift with prices, and the backtests never charge them. What would they
+#    cost Orderflow and Carry? (dev and gate)
 
 # +
 from pathlib import Path
@@ -39,9 +44,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+import json
 import sys
 sys.path.insert(0, str(Path.cwd().parent if Path.cwd().name == "notebooks" else Path.cwd()))
-from quantlib import backtest, metrics, robustness, signals, strategies
+from quantlib import backtest, metrics, robustness, signals, strategies, trials
 
 ROOT = Path.cwd().parent if Path.cwd().name == "notebooks" else Path.cwd()
 PROC = ROOT / "data" / "processed"
@@ -246,6 +252,60 @@ full_table = pd.DataFrame(full_rows).T
 full_table
 # -
 
+# ## 5. Notebook 02's calendar tests on the days they meant
+#
+# P2 and P3 used `held = m.shift(1)`, which holds day t when day t-1 was in
+# the bucket. The calendar is known in advance, so day t should be held when
+# day t itself is: as run, "weekday" held Tuesday to Saturday. Both versions,
+# the first reproducing the registry exactly:
+
+# +
+upto = slice(None, "2025-06-30")
+mkt = bench["MKT"].loc[upto]
+reg = trials.load_registry(PROC / "trial_registry.csv")
+cal = {}
+for bucket in ["weekday", "weekend", "turn_of_month"]:
+    m = signals.calendar_mask(mkt.index, bucket).astype(float)
+    for timing, held in [("as run", m.shift(1).fillna(0.0)), ("on the day", m)]:
+        r = mkt * held - held.diff().abs().fillna(0.0) * 20 / 1e4
+        cal[(f"P2 {bucket}", timing)] = sharpe_row(r, ["dev", "gate"])
+    row = reg[(reg["family"] == "seasonality") & (reg["config"] == json.dumps({"bucket": bucket, "probe": "P2"}))].iloc[0]
+    assert np.isclose(cal[(f"P2 {bucket}", "as run")]["dev"], row["dev_sharpe"], atol=1e-12)
+ew_1h = pd.read_parquet(PROC / "price_1h.parquet").loc[upto].pct_change().mean(axis=1)
+m = signals.calendar_mask(ew_1h.index, "off_hours").astype(float)
+for timing, held in [("as run", m.shift(1).fillna(0.0)), ("on the hour", m)]:
+    r = ew_1h * held - held.diff().abs().fillna(0.0) * 7 / 1e4
+    cal[("P3 off hours", timing)] = {w: metrics.sharpe(r.loc[WINDOWS[w]].dropna(), periods_per_year=24 * 365)
+                                     for w in ["dev", "gate"]}
+row = reg[(reg["family"] == "seasonality") & reg["config"].str.contains('"P3"')].iloc[0]
+assert np.isclose(cal[("P3 off hours", "as run")]["dev"], row["dev_sharpe"], atol=1e-12)
+calendar = pd.DataFrame(cal).T
+calendar.round(2)
+# -
+
+# ## 6. Trades that pull positions back to their targets
+#
+# After a day the book holds w(1 + r) of each coin and has to trade back to
+# the next target, w_next(1 + R) with R the book's return; the backtests
+# charge only the change in targets, w_next - w. The extra at 7 bps, as a
+# yearly cost:
+
+# +
+def drift_cost(w: pd.DataFrame, rets: pd.DataFrame, bps: float = 7.0) -> pd.Series:
+    w, r = w.reindex_like(rets).fillna(0.0), rets.fillna(0.0)
+    book = (w.shift(1) * r).sum(axis=1)
+    charged = (w - w.shift(1)).abs().sum(axis=1)
+    needed = (w.mul(1 + book, axis=0) - w.shift(1) * (1 + r)).abs().sum(axis=1)
+    return (needed - charged) * bps / 1e4
+
+
+targets = {"orderflow": strategies.orderflow_weights(taker.loc[upto], universe.loc[upto]),
+           "carry": strategies.carry_weights(funding.loc[upto], universe.loc[upto])}
+drift = pd.DataFrame({name: {w: drift_cost(t, returns.loc[upto]).loc[WINDOWS[w]].mean() * 365 for w in ["dev", "gate"]}
+                      for name, t in targets.items()}).T
+drift.round(4)
+# -
+
 # ## Save for the report
 
 pd.concat([seas.rename("seasonality"), orderflow.rename("orderflow"), carry.rename("carry")],
@@ -258,7 +318,10 @@ pd.DataFrame({
 cost_table.reset_index().to_csv(PROC / "posthoc_cost_stress.csv", index=False)
 carry_table.rename_axis("window").reset_index().to_csv(PROC / "posthoc_carry_split.csv", index=False)
 pd.DataFrame({"momentum": base_mom, "reversal": base_rev}).to_parquet(PROC / "baselines_full.parquet")
-print("saved sleeves_full, posthoc_book, posthoc_cost_stress, posthoc_carry_split, baselines_full")
+calendar.rename_axis(["test", "timing"]).reset_index().to_csv(PROC / "posthoc_calendar.csv", index=False)
+drift.rename_axis("sleeve").reset_index().to_csv(PROC / "posthoc_drift.csv", index=False)
+print("saved sleeves_full, posthoc_book, posthoc_cost_stress, posthoc_carry_split, baselines_full, "
+      "posthoc_calendar, posthoc_drift")
 
 # ## Conclusion
 #

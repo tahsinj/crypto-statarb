@@ -177,3 +177,14 @@ pd.concat([sleeves, book], axis=1).to_parquet(PROC / "v2_dev_gate.parquet")
 # in v2, because v2's rules were fixed before this run. Notebook 12 reports
 # each sleeve as well as the book, so Carry can be followed on its own, and
 # notebook 11 shows what the wider universe does to the frozen book.
+#
+# **Added later, the registered text above left as it was.** "None was
+# picked by comparing results" means none was picked on v2's own results:
+# change 5 was chosen on the frozen book's dev and gate results, and rank
+# weights also answer the DEXE case of the forward window (notebook 08).
+# "Never run on the lockbox or the forward window" holds for every result:
+# notebook 12 uses those months only as history for v2's first positions and
+# drops v2's P&L on them before recording anything. Two fixes came after this
+# run and before any test result was computed, both measured in notebook 11:
+# Carry gets a coin's spot move on the days its perp data is left out, and two
+# holes in the archive's 2022 files are filled.
