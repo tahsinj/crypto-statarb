@@ -24,7 +24,7 @@ the full research trail, including the ideas that failed.
   are the days the price runs away, which costs Orderflow 43% of its price
   P&L on dev. Under a square-root impact model its edge is mostly gone by $1M.
 - An edge that holds up on the full universe on dev and gate: funding carry
-  weighted by rank on perp prices, Sharpe 1.70 and 2.41. The second version of
+  weighted by rank on perp prices, Sharpe 1.69 and 2.41. The second version of
   the book is built on it and has a monthly forward test.
 - A tested library, a backtester that lags every weight by a day, and a report
   that is rebuilt from the notebooks' saved results and stops if a headline
@@ -36,21 +36,22 @@ the full research trail, including the ideas that failed.
 | Sharpe ratio | Dev | Gate | Lockbox | Forward |
 |---|---:|---:|---:|---:|
 | Frozen book, walk-forward, research coin list | +0.40 | +2.52 | +1.46 | -1.01 |
-| Frozen book, walk-forward, every pair | -0.25 | +1.87 | +0.36 | -0.91 |
+| Frozen book, walk-forward, every pair | -0.26 | +1.87 | +0.36 | -0.91 |
 | Frozen book, equal weight, research coin list | +1.68 | +2.90 | +1.23 | +0.63 |
-| Frozen book, equal weight, every pair | +0.78 | -1.46 | -0.62 | +1.26 |
-| v2 book, every pair | +1.36 | +1.11 | not run | from 2026-09-28 |
-| v2 Carry sleeve, every pair | +1.70 | +2.41 | not run | from 2026-09-28 |
+| Frozen book, equal weight, every pair | +0.76 | -1.46 | -0.62 | +1.26 |
+| v2 book, every pair | +1.35 | +1.11 | not run | from 2026-09-28 |
+| v2 Carry sleeve, every pair | +1.69 | +2.41 | not run | from 2026-09-28 |
 
 Dev is 2020-01 to 2024-07, the gate 2024-08 to 2025-06, the lockbox 2025-07 to
 2026-07 and the forward window 2026-07-07 to 2026-09-26. The walk-forward book
 needs 756 days of history, so its dev figure covers 2021-10 to 2024-07; over
 those dates the equal-weight book's is +0.46. "Every pair" is the daily top
-100 chosen from all Binance pairs, delisted ones included. v2 is never run on
-the lockbox or the forward window, which had both been seen before it was
-written. Its figures include a measurement fix made after its first run and
-before its test began (see v2 below); as first run they were +1.39 and +1.12,
-and +1.76 and +2.41 for Carry.
+100 chosen from all Binance pairs, delisted ones included. v2 is never
+evaluated on the lockbox or the forward window, which had both been seen before
+it was written; notebook 12 uses those months only as history for v2's first
+positions. Its figures include two fixes made after its first run and before
+any test result was computed (see v2 below); as first run they were +1.39 and
++1.12, and +1.76 and +2.41 for Carry.
 
 ## How the research was run
 
@@ -65,7 +66,9 @@ and +1.76 and +2.41 for Carry.
   others (limit orders). Two kinds of trade went uncharged in the research and
   are charged after the fact: Seasonality's weekday/weekend resizing (report
   appendix A) and the pairs engine's trades at its rebalance dates (section
-  5.6).
+  5.6). And, as in most weight-based backtests, the small daily trades that
+  bring drifted positions back to their targets are not charged; for Orderflow
+  and Carry they would cost about 0.2% a year on dev (appendix A.2).
 - The history is split in time, roughly 70/15/15, the usual train, validation
   and test split. Parameters were chosen on a development window (2020-01 to
   2024-07) and screened on a gate window (2024-08 to 2025-06), which also
@@ -129,12 +132,17 @@ Notebook 05's hourly reversal, rerun on every pair, has a bigger gross
 edge, about equal to its trading cost, but still loses money after costs in
 every configuration.
 
-Two fixes came after the first run of notebook 11. The perp data leaves out
-days a contract trades more than 20% away from spot, and the first run counted
-a held coin's return on those days as zero, which dropped crash days such as
-LUNA's and FTT's; Carry now gets the coin's spot move on them. And the pairs
-baseline picked its pairs with the close of the day whose return they then
-earned; picking them a day earlier moves its dev Sharpe from -0.40 to -0.37.
+Some fixes came after the first run of notebook 11. About 50 of the archive's
+monthly perp files for February and April 2022 are missing days (the last three
+of February, the first two of April); notebook 09 now fills them from the
+archive's daily files. The perp data leaves out days a contract trades more
+than 20% away from spot, and the first run counted a held coin's return on
+those days as zero, which dropped crash days such as LUNA's and FTT's; Carry
+now gets the coin's spot move on them. In the limit-order model a contract with
+no bar for more than three days is settled, so a relaunch under the same name
+(LUNA's) cannot revive an old position. And the pairs baseline picked its pairs
+with the close of the day whose return they then earned; picking them a day
+earlier moves its dev Sharpe from -0.40 to -0.37.
 
 Adding the 82-day forward test (notebook 08) to the lockbox year, the frozen
 book's whole out-of-sample record is a Sharpe of 0.37 over 453 days.
@@ -144,18 +152,18 @@ book's whole out-of-sample record is a Sharpe of 0.37 over 453 days.
 Notebook 10 registers a second version in the repository before testing it:
 Orderflow plus a Carry sleeve weighted by rank and measured on perp prices, on
 every pair, with equal weights and no Seasonality. On dev and gate it has a
-Sharpe of 1.36 and 1.11, nearly all from Carry (1.70 and 2.41); its Orderflow
-sleeve fails the gate (-0.78). These figures include a measurement fix made
-after v2's first run and before its test began, the same one as above: Carry
-gets a held coin's spot move on the days its perp data is left out. As first
-run they were 1.39 and 1.12 (Carry 1.76 and 2.41), and the registry keeps
-those. Its test is every day from 2026-09-28, and notebook 12 adds each month
-next to the frozen book.
+Sharpe of 1.35 and 1.11, nearly all from Carry (1.69 and 2.41); its Orderflow
+sleeve fails the gate (-0.78). These figures include two fixes made after v2's
+first run and before any test result was computed, both described above: Carry
+gets a held coin's spot move on the days its perp data is left out, and the two
+archive holes of 2022 are filled. As first run they were 1.39 and 1.12 (Carry
+1.76 and 2.41), and the registry keeps those. Its test is every day from
+2026-09-28, and notebook 12 adds each month next to the frozen book.
 
 ## What worked and what didn't
 
 - Funding carry weighted by rank and measured on perp prices holds up across
-  every pair on dev and gate (Sharpe 1.70 and 2.41). With z-score weights it
+  every pair on dev and gate (Sharpe 1.69 and 2.41). With z-score weights it
   piles into single crashing coins (report section 6.1 has DEXE) and loses on
   every pair (section 5.2).
 - Following the 10-day taker-buy imbalance looked best on the research coin
