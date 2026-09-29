@@ -157,12 +157,9 @@ reg = trials.load_registry(REGISTRY)
 print(f"registry: {len(reg)} rows, {int((reg['family'] == 'v2').sum())} of them v2")
 # -
 
-# Save for the report. (The check was added later: the file is v2's first
-# run, which notebook 11 and the report compare against, so a rerun, on data
-# that has since changed, must not overwrite it.)
+# Save for the report.
 
-if not (PROC / "v2_dev_gate.parquet").exists():
-    pd.concat([sleeves, book], axis=1).to_parquet(PROC / "v2_dev_gate.parquet")
+pd.concat([sleeves, book], axis=1).to_parquet(PROC / "v2_dev_gate.parquet")
 
 # ## After the first run
 #
@@ -192,6 +189,8 @@ if not (PROC / "v2_dev_gate.parquet").exists():
 # rule in change 4 drops its perp's data now earns what its contract did: its
 # own move and funding, or nothing once it has stopped trading. The rule
 # still decides which perps Carry can pick. And two holes in the archive's
-# 2022 files are filled. Both were made on 2026-09-28 and 2026-09-29 UTC,
-# after the test window opened but before any test result was computed. The
-# save cell above only writes its file if it is not there yet.
+# 2022 files are filled. Both were made on 2026-09-29 (UTC; an earlier version
+# of the first, on 2026-09-28, used the coin's spot move), after v2's first
+# test day had ended but before any test result was computed. This notebook is
+# not meant to be rerun: on today's data it would write different numbers
+# over its saved file, which notebook 11 checks against the registry.

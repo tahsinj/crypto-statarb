@@ -282,6 +282,29 @@ steps = pd.DataFrame({(labels[k], col): by_window(df[col]) for k, df in step.ite
 steps.round(2)
 # -
 
+# ## The walk-forward book's refit dates
+#
+# The walk-forward book refits every 63 days, counted from its first day, so
+# its numbers depend on where those dates fall. Here is its lockbox Sharpe
+# with the book started up to eight weeks later, which moves every refit
+# date and nothing else (the equal-weight book has no refit dates):
+
+# +
+refits = {}
+for key in [0, 2, 3, 4]:
+    sl = step[key][SLEEVES].dropna()
+    for later in range(0, 63, 7):
+        wf, _ = robustness.walk_forward_weights(sl.iloc[later:], train_days=756, step_days=63, min_train=252)
+        refits[(labels[key], later)] = by_window(wf)
+refits = pd.DataFrame(refits).T.rename_axis(["step", "days later"])
+refits["lockbox"].unstack().round(2)
+# -
+
+# The research list's book stays between 1.30 and 1.55 on the lockbox, and
+# the every-pair book between 0.08 and 0.57, so the gap between them does
+# not depend on the calendar, but the walk-forward figures are only good to
+# a few tenths.
+
 # ## Where Orderflow's edge sits
 #
 # The same rule on the 30 and 50 largest coins, and on the coins ranked 51
@@ -564,5 +587,6 @@ record.rename_axis("book").to_csv(PROC / "realism_oos.csv")
 pd.DataFrame(fills).T.rename_axis("sleeve").to_csv(PROC / "realism_fills.csv")
 pd.DataFrame(beta_rows).T.rename_axis("series").to_csv(PROC / "realism_beta.csv")
 fast.rename_axis(["panel", "lookback_h", "rebal_h"]).to_csv(PROC / "realism_fastrev.csv")
+refits.reset_index().to_csv(PROC / "realism_refits.csv", index=False)
 print("saved")
 # -

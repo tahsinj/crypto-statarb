@@ -407,5 +407,6 @@ price_1h.to_parquet(OUT / "price_1h.parquet")
 # -
 
 # The 91 hourly closes that differ from the research panel are off by a
-# quarter of a percent at the median and fall on a handful of days, most of
-# them in December 2021: too few to matter.
+# quarter of a percent at the median. They fall on 19 days: 15 in December
+# 2021, with a few closes each, and three with more (2020-12-21, 2021-04-23
+# and 2022-04-13). Too few to matter.
