@@ -395,3 +395,5 @@ print(f"\nTotal rows: {len(reg_final)}")
 # fact zero, and notebook 08 repeats the check with no relative tolerance.
 # And Orderflow's k=10 had one tested neighbour, not two: k=5, positive on
 # both windows. The other tested value, k=1, lost on both (notebook 03).
+# "Opened once" holds for this protocol; the project's first version had run
+# the two baselines over most of the lockbox as twsq alphas (README).

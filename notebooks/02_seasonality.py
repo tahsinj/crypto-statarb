@@ -21,7 +21,10 @@
 # institutional flow carries more information, weekday and US-hours moves
 # should trend more, and the retail-heavy buckets should revert or earn a
 # different premium. Turn-of-month rebalancing is a related flow with a fixed
-# schedule.
+# schedule. The project's first version, on CoinGecko data before this
+# protocol, had already tried a weekend tilt on momentum and seen it hold up
+# on 2023-2024 data; the probes below test the idea again on the new data,
+# with every config logged.
 #
 # Probes (every config is logged to the trial registry). A survivor has to
 # beat the untilted momentum sleeve, and zero, on both dev and gate, and a
@@ -32,7 +35,8 @@
 #       with a timing test only if the gap is material
 #   P4  turn-of-month tilt on the momentum sleeve (daily, 20 bps)
 #
-# Everything stops at 2025-06-30; the lockbox is first read in notebook 06.
+# Everything stops at 2025-06-30; this protocol first reads the lockbox in
+# notebook 06.
 
 from pathlib import Path
 

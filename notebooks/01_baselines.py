@@ -10,12 +10,15 @@
 
 # # 01: Baseline strategies
 #
-# Two standard strategies, run first as baselines that every
-# later idea has to beat: time-series momentum (sign of the 30-day return,
+# Two strategies, run first as baselines that every later
+# idea has to beat: time-series momentum (sign of the 30-day return,
 # vol-targeted to 15%) and correlation pairs. Their settings were fixed before
 # the gate window, so the gate shows how they hold up on data they were not
-# chosen on. Everything here stops at 2025-06-30; the lockbox is first read in
-# notebook 06.
+# chosen on. They come from the project's first version (on CoinGecko data,
+# before this protocol), which picked them from small grids on 2020-2022 data
+# and had also run both baselines as twsq alphas over most of the lockbox
+# (README). Everything here stops at 2025-06-30; this protocol first reads the
+# lockbox in notebook 06.
 
 from pathlib import Path
 
@@ -47,10 +50,11 @@ rev = strategies.reversal_sleeve(price, returns, universe, cost_bps=7).loc["2020
 
 trials.log_trial(REGISTRY, "incumbent_momentum", {"lookback": 30, "target_vol": 0.15},
                  metrics.sharpe(mom.loc[DEV]), metrics.sharpe(mom.loc[GATE]),
-                 note="baseline, standard parameters")
+                 note="baseline, parameters from the first version")
 trials.log_trial(REGISTRY, "incumbent_pairs", {"entry": 2.0, "zwin": 30, "top_k": 20},
                  metrics.sharpe(rev.loc[DEV]), metrics.sharpe(rev.loc[GATE]),
-                 note="baseline, standard parameters")
+                 note="baseline, parameters from the first version")
+# (the registry keeps the note these two rows were first logged with, on 2026-07-06)
 
 # ## Per-window table
 
