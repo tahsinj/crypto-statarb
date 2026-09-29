@@ -112,8 +112,8 @@ perp_keep = sorted(p + "USDT" for p in perp_names)
 raw_um = fetch.refresh(RAW / "archive_um_1d.pkl.zip",
                        lambda: fetch.fetch_archive("um", perp_keep, "2019-09-01", END, ARCHIVE, workers=24),
                        max_age_days=float("inf"))
-# about 50 monthly perp files miss a few days (the last three of February
-# 2022, the first two of April 2022), while the daily files for those days exist
+# the monthly perp files of about 50 contracts miss a few days (the last three
+# of February 2022, the first two of April 2022); the daily files exist
 um_holes = fetch.refresh(RAW / "archive_um_1d_holes.pkl.zip",
                          lambda: fetch.fill_short_days("um", raw_um, "2020-01-01", END, ARCHIVE, workers=24),
                          max_age_days=float("inf"))
@@ -407,6 +407,6 @@ price_1h.to_parquet(OUT / "price_1h.parquet")
 # -
 
 # The 91 hourly closes that differ from the research panel are off by a
-# quarter of a percent at the median. They fall on 19 days: 15 in December
-# 2021, with a few closes each, and three with more (2020-12-21, 2021-04-23
-# and 2022-04-13). Too few to matter.
+# quarter of a percent at the median. They fall on 19 days: 16 with one to
+# five closes each, 15 of them in December 2021, and three with more
+# (2020-12-21, 2021-04-23 and 2022-04-13). Too few to matter.

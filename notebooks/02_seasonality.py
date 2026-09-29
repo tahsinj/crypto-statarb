@@ -22,9 +22,10 @@
 # should trend more, and the retail-heavy buckets should revert or earn a
 # different premium. Turn-of-month rebalancing is a related flow with a fixed
 # schedule. The project's first version, on CoinGecko data before this
-# protocol, had already tried a weekend tilt on momentum and seen it hold up
-# on 2023-2024 data; the probes below test the idea again on the new data,
-# with every config logged.
+# protocol, had already found the equal-weight market earning more at weekends
+# and tested holding it only at weekends, out of sample on 2023-2024 data; P2
+# below tests that idea again, and P1 tilts momentum instead, with every
+# config logged.
 #
 # Probes (every config is logged to the trial registry). A survivor has to
 # beat the untilted momentum sleeve, and zero, on both dev and gate, and a
@@ -231,6 +232,18 @@ print(f"{len(survivors)} config(s) beat baseline on both windows")
 # Tuesday to Saturday. On the days they meant, all four still fail the rule
 # above, so the choice of survivor stands. The numbers above and in the
 # registry are as run.
+#
+# **Added later.** The selection rule was written two ways before any result.
+# The text above asks for a neighbouring parameter that is positive on both
+# windows; the selection cell's comment, as first committed, asked for a
+# neighbour that is also a survivor. Only the first can be met: the two
+# passing configs' tested neighbours are the untilted sleeve, which cannot
+# beat itself, and weekday=0, whose dev Sharpe (1.34) is below the untilted
+# sleeve's (1.65). Eight minutes after the results were logged the comment was
+# changed to match the text, and the rebuilt history holds only that version.
+# Under the stricter reading no calendar tilt would have entered the book.
+# Without Seasonality the book's lockbox Sharpe would have been 2.11
+# walk-forward and 1.40 equal weight, against 1.46 and 1.23 as run.
 
 best = signals.seasonal_scale(mom, weekend=1.0, weekday=0.5)
 best.rename("seasonality").to_frame().to_parquet(PROC / "sleeve_seasonality.parquet")
