@@ -12,7 +12,7 @@ the full research trail, including the ideas that failed.
 ## What this project shows
 
 - A research protocol that can fail: development, gate and lockbox windows in
-  time order, a registry of the 53 configurations tried on the Binance data
+  time order, a registry of the 53 configurations the research chose between
   (the two baselines kept parameters set before it), deflated Sharpe ratios
   that charge for the 48 research ones, a lockbox opened once, and a second
   version registered in the repository before it was tested.
@@ -60,8 +60,9 @@ any test result was computed (see v2 below); as first run they were +1.39 and
   hourly bars, and perp funding rates. Notebook 09 rebuilds the daily and
   hourly data from Binance's public archive with every pair that ever traded,
   delisted ones included.
-- Each day's universe is the 100 most liquid coins as of the previous day, so
-  no backtest trades a coin it could not have known about.
+- Each day's universe is the 100 most liquid coins as of the previous day. The
+  list they are drawn from, though, was picked by volume in July 2026, which
+  is the survivorship bias notebooks 09 and 11 measure.
 - Weights set at the close of day t earn day t+1's return, and trades are
   charged 20 bps for the momentum sleeves (market orders) and 7 bps for the
   others (limit orders). Two kinds of trade went uncharged in the research and
@@ -81,9 +82,10 @@ any test result was computed (see v2 below); as first run they were +1.39 and
   06, after every choice had been made; notebooks 07 and 11 re-score the same
   frozen book on it after the fact and say so, and notebook 08 reruns it as a
   check.
-- Every configuration tried on the Binance data is in a trial registry: 48
+- Every configuration the research chose between is in a trial registry: 48
   research configs, which the deflated Sharpe ratio charges for, plus the two
-  combination rules and the three v2 rows, 53 in all.
+  combination rules and the three v2 rows, 53 in all. The post-hoc checks of
+  notebooks 07 and 11 re-score frozen strategies and log nothing.
 
 ## The book on the original coin list
 
@@ -126,6 +128,10 @@ the same frozen book one fix at a time (report section 5):
 | and Carry on perp prices | -0.01 | -0.46 |
 | and limit orders that have to fill | +0.12 | -0.69 |
 
+The walk-forward figures depend on the book's refit dates: started up to eight
+weeks later, the research book's lockbox Sharpe ranges from 1.30 to 1.55 and
+the every-pair book's from 0.08 to 0.57.
+
 The research coin list, picked by volume in July 2026, left out 46% of the
 historical universe (EOS, MATIC, XMR, VET, SAND and many more), and the coins
 that did the damage once they are back (OM, VIDT, BNX and others) were mostly
@@ -163,8 +169,9 @@ Sharpe of 1.35 and 1.13, nearly all from Carry (1.68 and 2.42); its Orderflow
 sleeve fails the gate (-0.78). These figures include two fixes made after v2's
 first run, both described above: a Carry position held into a day the 20% rule
 drops earns what its contract did, and the two archive holes of 2022 are
-filled. They were made on 2026-09-28 and 2026-09-29 (UTC), after the test
-window opened but before any test result was computed. As first run the
+filled. Both were made on 2026-09-29 (UTC; an earlier version of the first on
+2026-09-28), after v2's first test day had ended but before any test result
+was computed. As first run the
 figures were 1.39 and 1.12 (Carry 1.76 and 2.41), and the registry keeps
 those. Its test is every day from 2026-09-28, and notebook 12 adds each month
 next to the frozen book.
@@ -246,7 +253,8 @@ uv pip install --python .venv -r requirements.txt
 for f in tests/test_*.py; do .venv/bin/python "$f"; done
 
 # notebooks, in order, on a fresh copy (read the notes below first); --update
-# keeps a notebook's saved outputs if its run stops
+# keeps a notebook's saved outputs if its run stops. Where data/ already
+# exists, leave out 06_portfolio and 10_v2: they are records (see below).
 for nb in 00_data 01_baselines 02_seasonality 03_orderflow 04_carry 05_fastrev 06_portfolio 07_posthoc \
           08_forward 09_archive_data 10_v2 11_realism 12_forward_log; do
   .venv/bin/jupytext --update --to notebook notebooks/$nb.py
@@ -280,9 +288,9 @@ Things to know before rerunning:
   the first time (around an hour), cached under `data/raw/archive/`, and
   caches the archive's file listings, so a rerun works offline.
 - Notebook 10 is v2's registered first run. It ran on data that still had
-  the two 2022 archive holes, so a rerun today gives slightly different
-  numbers; it only writes `v2_dev_gate.parquet` if the file is not there
-  yet, and notebook 11 stops if that file no longer matches the registry.
+  the two 2022 archive holes, so a rerun today would write slightly different
+  numbers over its outputs and `v2_dev_gate.parquet`; notebook 11 stops if
+  that file no longer matches the registry.
 - Notebook 12 is the forward log. Once a month, set `END` to the last
   complete UTC day, run it and commit it, so each month's numbers are on
   record before the next month's data exists. Commit dates are set by the

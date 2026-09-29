@@ -102,6 +102,7 @@ def load_inputs() -> dict:
     d["calendar"] = pd.read_csv(PROC / "posthoc_calendar.csv").set_index(["test", "timing"])
     d["drift"] = pd.read_csv(PROC / "posthoc_drift.csv").set_index("sleeve")
     d["rebalance"] = pd.read_csv(PROC / "posthoc_rebalance.csv").set_index("book")
+    d["refits"] = pd.read_csv(PROC / "realism_refits.csv").set_index(["step", "days later"])
     d["fwd_split"] = pd.read_csv(PROC / "forward_attribution.csv").set_index(["part", "item"]).iloc[:, 0]
     d["fwd_conc"] = pd.read_csv(PROC / "forward_concentration.csv").set_index("window")
     d["fwd_coin"] = pd.read_csv(PROC / "forward_top_coin.csv", parse_dates=["date"]).set_index("date")
@@ -388,6 +389,13 @@ def compute(d: dict) -> dict:
         if meant["dev"] > max(0, base_seas[0]) and meant["gate"] > max(0, base_seas[1]):
             failures.append(f"  section 3.1 says the calendar tests still fail on the right days, but {test} passes")
     v["calendar"], v["drift"], v["rebalance"] = cal, d["drift"], d["rebalance"]
+    rf = d["refits"]
+    v["refits"] = {st_: (rf.loc[st_, "lockbox"].min(), rf.loc[st_, "lockbox"].max()) for st_ in ["0 as run", "2 every pair"]}
+    for st_ in rf.index.get_level_values(0).unique():
+        if not np.isclose(rf.loc[(st_, 0), "lockbox"], v["steps"][(st_, "walk_forward")]["Lockbox"], rtol=0, atol=1e-9):
+            failures.append(f"  realism_refits at 0 days later is not step {st_}'s walk-forward book")
+    if not v["refits"]["2 every pair"][1] < v["refits"]["0 as run"][0]:
+        failures.append("  section 5.2 says the research book beats the every-pair book for any refit dates")
     if not all(p["Dev"] < 0 for p in v["pairs_c"].values()):
         failures.append("  section 5.6 says pairs loses money on dev in every version")
     oos = {k: rs[f"0 as run|{k}"].loc[LOCKBOX_START:FORWARD_END].dropna() for k in ["walk_forward", "equal_weight"]}
@@ -598,7 +606,7 @@ def doc_failures(v: dict, d: dict) -> list:
     n_reg = len(d["registry"])
     s = lambda key: v2f[key]["sharpe"]                       # noqa: E731
     readme = [
-        f"a registry of the {n_reg} configurations tried on the Binance data (the two baselines kept "
+        f"a registry of the {n_reg} configurations the research chose between (the two baselines kept "
         f"parameters set before it), deflated Sharpe ratios that charge for the {N_TRIALS} research ones",
         f"{pct(v['surv'], 0)} of the historical top-100 universe was missing from it",
         f"with all {v['n_all']} coins, delisted ones included, the book's lockbox Sharpe falls from "
@@ -635,6 +643,9 @@ def doc_failures(v: dict, d: dict) -> list:
         f"an {F['Book, walk-forward']['n']}-day forward test",
         f"holds exactly {N_TRIALS} rows",
     ]
+    rfa, rfe = v["refits"]["0 as run"], v["refits"]["2 every pair"]
+    readme.append(f"the research book's lockbox Sharpe ranges from {rfa[0]:.2f} to {rfa[1]:.2f} and the every-pair "
+                  f"book's from {rfe[0]:.2f} to {rfe[1]:.2f}")
     drift = {pct(v["drift"].loc[n, "dev"]) for n in ["orderflow", "carry"]}
     reb = v["rebalance"]
     readme.append(f"for Orderflow and Carry they would cost about {drift.pop()} a year on dev, and the books' "
@@ -979,10 +990,11 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         "orders) and combined the ones that passed into a book. Parameters were chosen on a "
         "development window (2020 to July 2024) and screened on a gate window (August 2024 to June "
         "2025), which also decided between configs that passed both, and the final book was run "
-        "once on a lockbox year (July 2025 to July 2026). Every configuration tried on the Binance "
-        f"data is in a registry: {N_TRIALS} research configurations, which the deflated Sharpe charges "
-        f"for, plus the book's two combination rules and v2's three rows, {reg_rows} in all. The two "
-        "baselines kept parameters set before the registry existed, and each is logged as one "
+        "once on a lockbox year (July 2025 to July 2026). Every configuration the research chose "
+        f"between is in a registry, {reg_rows} rows in all: {N_TRIALS} research configurations, which "
+        "the deflated Sharpe charges for, the book's two combination rules and v2's three rows. The "
+        "post-hoc checks of section 5 and appendix A re-score frozen strategies and log nothing. The "
+        "two baselines kept parameters set before the registry existed, and each is logged as one "
         "trial.\n\n"
         "On the research data the book made money on its lockbox: a walk-forward Sharpe of "
         f"{lk_wf['sharpe']:.2f} with a beta to BTC of {lk_wf['beta']:+.2f}. I then rebuilt the data "
@@ -1024,7 +1036,7 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
     pdf.h1("What the project shows")
     pdf.bullets([
         "A protocol that can fail. The history is split into development, gate and lockbox windows "
-        "in time order, every configuration tried on the Binance data is logged "
+        "in time order, every configuration the research chose between is logged "
         f"({reg_rows} rows, the {N_TRIALS} research ones charged for with deflated Sharpe ratios), the "
         "lockbox was opened once, and v2's rules "
         "were committed before any v2 number existed. The problems below were found because of it.",
@@ -1061,19 +1073,24 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         f"is 1000PEPE), summed per day, from {funding.index.min():%Y-%m}.",
         "The data was fetched on 2026-07-06, so that last day is a partial day in every panel.",
         "For section 5 and v2, the same daily data for every Binance USDT pair that ever traded, "
-        f"from the public archive ({v['n_all']} coins once stablecoins, pegged assets, tokenized "
-        "stocks and leveraged tokens are removed), hourly bars for the coins that were ever in the "
+        f"from the public archive ({v['n_all']} coins once stablecoins, wrapped coins, pegged assets, "
+        "tokenized stocks and leveraged tokens are removed), hourly bars for the coins that were ever "
+        "in the "
         "top 100, and prices and funding for every perp.",
     ])
     pdf.body(
         "The tradable universe is point-in-time: on each day, the 100 coins with the highest "
         "30-day median dollar volume, using data up to the day before, with a $1M floor and at "
         "least 30 days of history. Stablecoins, wrapped coins and leveraged tokens are excluded. "
-        f"The median universe since 2020 has {uni_size} names. The 2018-2019 data only serves as "
-        "history for the first signals.\n\n"
+        f"The median universe since 2020 has {uni_size} names. The 2018-2019 data serves as history "
+        "for the first signals, and from September 2019 the sleeves' returns also train the first "
+        "walk-forward weights.\n\n"
         "The backtest applies weights set at the close of day t to the return of day t+1, so no "
-        "position uses information it could not have had. The exception is how the pairs baseline "
-        "picked its pairs, measured in section 5.6. Costs are charged on turnover every "
+        "position uses information it could not have had, with two exceptions. The pairs baseline "
+        "picked its pairs with the close of the day whose return they then earned (section 5.6). "
+        "And the coin lists themselves, the daily one and the 60 names with hourly bars and funding, "
+        "were picked by volume on the fetch date; section 5 shows that most of the research result "
+        "came from that choice. Costs are charged on turnover every "
         "day: 20 bps per dollar traded for market orders (7 bps commission plus 13 bps "
         "slippage) and 7 bps for limit orders. The momentum sleeves take liquidity and pay "
         "20 bps; orderflow, carry and pairs rebalance passively and pay 7 bps. Backtests are "
@@ -1342,7 +1359,12 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         "With every pair in the universe the walk-forward book's lockbox Sharpe is "
         f"{sr(st[('2 every pair', 'walk_forward')]['Lockbox'])} and the equal-weight book's "
         f"{sr(st[('2 every pair', 'equal_weight')]['Lockbox'])}, and the equal-weight book loses money "
-        f"on the gate as well ({sr(st[('2 every pair', 'equal_weight')]['Gate'])})."
+        f"on the gate as well ({sr(st[('2 every pair', 'equal_weight')]['Gate'])}). The walk-forward "
+        "numbers also depend on the book's refit dates: started up to eight weeks later, the research "
+        f"book's lockbox Sharpe ranges from {v['refits']['0 as run'][0]:.2f} to "
+        f"{v['refits']['0 as run'][1]:.2f} and the every-pair book's from "
+        f"{v['refits']['2 every pair'][0]:.2f} to {v['refits']['2 every pair'][1]:.2f}. The gap between "
+        "them holds for any start; the equal-weight book has no refit dates."
     )
     rows = [["Sleeve, step", "Dev", "Gate", "Lockbox", "Forward"]]
     for s in SLEEVE_NAMES:
@@ -1483,7 +1505,7 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
              f"{n_fwd} days after the research data was fetched.")
     pdf.h2("6.1 The forward test, July to September 2026")
     pdf.body(
-        "Notebook 08, added on 2026-09-26, downloads the days after the research data ends for the "
+        "Notebook 08, added on 2026-09-27, downloads the days after the research data ends for the "
         "same coins and runs the frozen book on them, with the same universe rule, sleeves, costs "
         "and walk-forward settings. Where the new download overlaps the cached data (May to early "
         "July 2026) every daily bar and funding rate matches, and up to 2026-07-05 the rebuilt "
@@ -1591,9 +1613,9 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         "pnl_funding and the archive's traded panels). And the two 2022 holes in the archive are "
         "filled. Neither changes v2's rules. The first changes what v2 earns on a few days; the "
         "second gives Carry funding data it was missing on those days of 2022, which also changes "
-        "its positions for about a week after each hole. Both were made on 2026-09-28 and "
-        "2026-09-29 (UTC), after v2's test window had opened but before any test result was "
-        "computed. An earlier version of the first, committed on 2026-09-28, gave a held coin its "
+        "its positions for about a week after each hole. Both were made on 2026-09-29 (UTC), after "
+        "v2's first test day had ended but before any test result was computed. An earlier version "
+        "of the first, committed on 2026-09-28, gave a held coin its "
         "spot move instead, which is wrong both on days the perp trades far from spot and after a "
         "delisting. The table uses both fixes. "
         "As first run, v2 had a Sharpe of "
