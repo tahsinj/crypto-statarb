@@ -14,8 +14,8 @@ the full research trail, including the ideas that failed.
 - A research protocol that can fail: development, gate and lockbox windows in
   time order, a registry of the 53 configurations the research chose between
   (the two baselines kept parameters set before it), deflated Sharpe ratios
-  that charge for the 48 research ones, a lockbox opened once, and a second
-  version registered in the repository before it was tested.
+  that charge for the 48 research ones, a lockbox the protocol opened once, and
+  a second version registered in the repository before it was tested.
 - A survivorship check on its own result. The research coin list, the 150 USDT
   pairs with the most 24-hour volume on 2026-07-06, was mostly survivors: 46%
   of the historical top-100 universe was missing from it. Rebuilt from
@@ -78,14 +78,29 @@ any test result was computed (see v2 below); as first run they were +1.39 and
   and test split. Parameters were chosen on a development window (2020-01 to
   2024-07) and screened on a gate window (2024-08 to 2025-06), which also
   decided between configs that passed both, so the gate is not a clean
-  hold-out. The lockbox year (2025-07 to 2026-07) was run once, in notebook
-  06, after every choice had been made; notebooks 07 and 11 re-score the same
-  frozen book on it after the fact and say so, and notebook 08 reruns it as a
-  check.
+  hold-out. The lockbox year (2025-07 to 2026-07) was run once by the
+  protocol, in notebook 06, after every choice had been made (the two
+  baselines had been run over it before; see the last point); notebooks 07
+  and 11 re-score the same frozen book on it after the fact and say so, and
+  notebook 08 reruns it as a check.
 - Every configuration the research chose between is in a trial registry: 48
   research configs, which the deflated Sharpe ratio charges for, plus the two
   combination rules and the three v2 rows, 53 in all. The post-hoc checks of
   notebooks 07 and 11 re-score frozen strategies and log nothing.
+- Before this protocol, a first version of the project (2026-06-29 to 07-02, on
+  CoinGecko data) picked the baselines' parameters, momentum's 30-day lookback
+  and the pairs settings, from small grids on 2020-2022 data, and tried a
+  weekend tilt on momentum: 26 configurations in all, none in the registry. It
+  also ran both baselines as twsq alphas up to 2026-07-02, momentum from
+  2024-08 and pairs from 2025-07, so over most of the lockbox (Sharpe -0.29 and
+  -1.11). Orderflow, Carry, the Seasonality rule and the combination rules came
+  later and were chosen on dev and gate only. Counting those 26 configurations,
+  the book's lockbox deflated Sharpe would be 0.16 instead of 0.20. The July
+  git history was rebuilt in September 2026 from the original commits, keeping
+  their dates: the first version is left out, and each July commit carries the
+  time of the last original commit it combines, so the freeze commit also holds
+  a fix to Carry's funding P&L made three minutes after the freeze and before
+  notebook 06 ran.
 
 ## The book on the original coin list
 
@@ -108,7 +123,8 @@ equal-weight version alongside. As run on the research coin list, over
 
 On the lockbox the walk-forward book had a Sharpe of 1.46, an alpha of 9.5% a
 year (Newey-West t = 1.25) and a beta to BTC of -0.02. Its deflated Sharpe was
-0.20, far below 0.95, so the result was never statistically proven, and the
+0.20, or 0.16 counting the first version's configurations, far below 0.95, so
+the result was never statistically proven, and the
 checks below show that most of it came from the coin list. Report section 4
 splits every number by window, and sections 2 and 4 explain why the alphas
 look large: momentum's is mostly market timing, and Carry runs at about 31%

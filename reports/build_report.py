@@ -56,6 +56,7 @@ RWIN = {"Dev": slice(DEV_START, DEV_END), "Gate": slice(GATE_START, GATE_END),
         "Lockbox": slice(LOCKBOX_START, LOCKBOX_END), "Forward": FORWARD}
 ALL = PROC / "all_pairs"
 N_TRIALS = 48          # research trials in the registry (rows 1-48); rows 49-50 are the two books
+FIRST_VERSION_TRIALS = 26   # configurations the project's first version searched (not in the registry)
 BOOT = dict(n_boot=2000, method="block", seed=42)   # same settings as notebooks 06 and 07
 
 # fpdf2's core fonts are Latin-1 only.
@@ -219,6 +220,7 @@ def compute(d: dict) -> dict:
     v["lk_n"] = len(lk)
     v["dsr_full"] = metrics.deflated_sharpe(full, n_trials=N_TRIALS)
     v["dsr_lk"] = metrics.deflated_sharpe(lk, n_trials=N_TRIALS)
+    v["dsr_lk_all"] = metrics.deflated_sharpe(lk, n_trials=N_TRIALS + FIRST_VERSION_TRIALS)
     v["ci"] = metrics.bootstrap_sharpe_ci(lk, **BOOT)
     v["corr"] = sleeves.loc[WINDOWS["Dev"]].corr()
     # The walk-forward book starts in 2021-10, so compare equal weight over the same dates too.
@@ -443,6 +445,7 @@ def compute(d: dict) -> dict:
         ("lockbox WF alpha t", lk_wf["alpha_t"], 1.253, 0.0005),
         ("deflated Sharpe, full", v["dsr_full"], 0.4901, 0.00005),
         ("deflated Sharpe, lockbox", v["dsr_lk"], 0.2049, 0.00005),
+        ("deflated Sharpe, lockbox, first version's trials too", v["dsr_lk_all"], 0.1620, 0.00005),
         ("bootstrap CI low", v["ci"][0], -0.423, 0.0005),
         ("bootstrap CI high", v["ci"][1], 3.444, 0.0005),
         ("dev WF Sharpe", v["book"][("WF", "Dev")]["sharpe"], 0.397, 0.0005),
@@ -643,6 +646,9 @@ def doc_failures(v: dict, d: dict) -> list:
         f"an {F['Book, walk-forward']['n']}-day forward test",
         f"holds exactly {N_TRIALS} rows",
     ]
+    readme += [f"or {v['dsr_lk_all']:.2f} counting the first version's configurations",
+               f"the book's lockbox deflated Sharpe would be {v['dsr_lk_all']:.2f} instead of {v['dsr_lk']:.2f}",
+               f"{FIRST_VERSION_TRIALS} configurations in all, none in the registry"]
     rfa, rfe = v["refits"]["0 as run"], v["refits"]["2 every pair"]
     readme.append(f"the research book's lockbox Sharpe ranges from {rfa[0]:.2f} to {rfa[1]:.2f} and the every-pair "
                   f"book's from {rfe[0]:.2f} to {rfe[1]:.2f}")
@@ -1038,7 +1044,7 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         "A protocol that can fail. The history is split into development, gate and lockbox windows "
         "in time order, every configuration the research chose between is logged "
         f"({reg_rows} rows, the {N_TRIALS} research ones charged for with deflated Sharpe ratios), the "
-        "lockbox was opened once, and v2's rules "
+        "protocol opened the lockbox once, and v2's rules "
         "were committed before any v2 number existed. The problems below were found because of it.",
         "A survivorship check on its own result. The daily data was rebuilt from Binance's public "
         f"archive for {v['n_all']} coins, delisted ones included, and its prices and funding rates "
@@ -1105,20 +1111,34 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
     pdf.caption("The windows split the history roughly 70/15/15 in time, the usual train, "
                 "validation and test split. The gate also decided between configs that passed both "
                 "windows, so the chosen sleeves' gate numbers are not out of sample; the lockbox is. "
-                "The lockbox was read once, in notebook 06, after every selection decision had been "
-                "made. Appendix A and section 5 re-score the same frozen book with corrected inputs "
-                "and say so.")
+                "The protocol read the lockbox once, in notebook 06, after every selection decision had "
+                "been made; the project's first version had already run the two baselines over it "
+                "(section 2). Appendix A and section 5 re-score the same frozen book with corrected "
+                "inputs and say so.")
 
     # 2. Baselines
     pdf.h1("2. Baselines: momentum and pairs")
     pdf.body(
-        "Two standard strategies serve as baselines that every later idea has to "
+        "Two strategies serve as baselines that every later idea has to "
         "beat. Time-series momentum holds each coin long or short by the sign of its 30-day "
         "return (skipping the latest day) and scales the book to 15% volatility. The pairs sleeve "
         "re-selects up to 20 correlated pairs every 63 days, opens a spread when its z-score "
         "passes 2 and holds it until the z-score passes 2 on the other side. Their settings were "
         "fixed before the gate window, so the gate shows how they hold up on data they were not "
-        "chosen on."
+        "chosen on.\n\n"
+        "Those settings come from the project's first version, built on CoinGecko data from "
+        "2026-06-29 to 07-02, before this protocol existed. It picked them from small grids on "
+        "2020-2022 data and also tried a weekend tilt on momentum, 26 configurations in all, none "
+        "of them in the registry. It also ran both baselines as twsq alphas up to 2026-07-02, "
+        "momentum from 2024-08 and pairs from 2025-07 (Sharpe -0.29 and -1.11), so for these two "
+        "the lockbox was not unseen. Orderflow, Carry, the Seasonality rule and the combination rules "
+        "came later and were chosen on dev and gate only. Counting the first version's "
+        "configurations as trials, the book's lockbox deflated Sharpe would be "
+        f"{v['dsr_lk_all']:.2f} instead of {v['dsr_lk']:.2f} (section 4). The July part of the git "
+        "history was rebuilt in September 2026 from the original commits, keeping their dates: the "
+        "first version is left out, and each July commit carries the time of the last original "
+        "commit it combines, so the freeze commit also holds a fix to Carry's funding P&L made three "
+        "minutes after the freeze and before notebook 06 ran."
     )
     pdf.table_block(perf_rows(base, [("momentum", "Dev"), ("momentum", "Gate"),
                                      ("reversal", "Dev"), ("reversal", "Gate")],
@@ -1285,7 +1305,8 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         "The deflated Sharpe is the probability that the observed Sharpe beats the best Sharpe "
         f"that {N_TRIALS} strategies with no real edge would show by luck. It is "
         f"{v['dsr_full']:.2f} on the full "
-        f"sample and {v['dsr_lk']:.2f} on the lockbox, both far below 0.95. One year is also "
+        f"sample and {v['dsr_lk']:.2f} on the lockbox ({v['dsr_lk_all']:.2f} counting the first version's "
+        f"{FIRST_VERSION_TRIALS} configurations, section 2), both far below 0.95. One year is also "
         f"short: the bootstrap interval above is {hi - lo:.1f} Sharpe points wide. The book did "
         "make money with almost no market exposure, but this sample cannot separate that from "
         "luck. Section 5 reruns the same book on a universe with every pair, where its lockbox "
