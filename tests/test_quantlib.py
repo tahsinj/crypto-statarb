@@ -189,29 +189,6 @@ def test_limit_fills_miss_buys_when_the_price_runs_away():
     assert res.gross_returns.sum() == 0.0                  # so the 10% up days are missed
 
 
-def test_fill_gap_starts_fills_only_the_first_missing_day():
-    idx = pd.date_range("2024-01-01", periods=7)
-    perp = pd.DataFrame({"A": [np.nan, 0.01, np.nan, np.nan, np.nan, 0.02, np.nan]}, index=idx)
-    spot = pd.DataFrame({"A": [0.5, 0.5, -0.3, -0.2, -0.1, 0.5, 0.4]}, index=idx)
-    out = backtest.fill_gap_starts(perp, spot)["A"]
-    # before listing stays empty; the first day of each gap gets the spot move; the rest stay empty
-    assert np.isnan(out.iloc[0]) and out.iloc[1] == 0.01 and out.iloc[2] == -0.3
-    assert out.iloc[3:5].isna().all() and out.iloc[5] == 0.02 and out.iloc[6] == 0.4
-
-
-def test_fill_gap_starts_with_price_fills_the_day_a_contract_is_back():
-    idx = pd.date_range("2024-01-01", periods=6)
-    # the contract's close on day 3 is dropped, so days 3 and 4 have no return;
-    # a delisted one (column B) has no price after day 2
-    price = pd.DataFrame({"A": [1.0, 1.1, np.nan, 1.2, 1.3, 1.4], "B": [1.0, 1.1, np.nan, np.nan, np.nan, np.nan]},
-                         index=idx)
-    perp = price.pct_change()
-    spot = pd.DataFrame(0.05, index=idx, columns=["A", "B"])
-    out = backtest.fill_gap_starts(perp, spot, price=price)
-    assert out["A"].iloc[2] == 0.05 and out["A"].iloc[3] == 0.05     # the gap day and the day it is back
-    assert out["B"].iloc[2] == 0.05 and out["B"].iloc[3:].isna().all()  # delisted: settled after the first day
-
-
 def test_limit_fills_settle_a_contract_that_stops_trading():
     """A position is dropped once its contract has gone more than settle_after days without a bar,
     so a relaunch under the same name cannot revive it; after a shorter gap it carries on."""
@@ -277,13 +254,25 @@ def test_pairs_lag_selection_picks_before_the_first_traded_day():
         assert [(r - s).days for r, s in zip(rebal, seen)] == [gap] * len(rebal) and len(seen) == len(rebal)
 
 
-def test_universe_pointwise_no_lookahead():
-    """Universe on date t must not use volume from date t (uses shift(1))."""
+def test_universe_warm_up_and_size():
+    """The warm-up days are empty and no day holds more than top_n coins."""
     p = _toy_panels()
     uni = data.build_universe(p, top_n=10, adv_window=30, min_history=30)
     # First 30 days cannot be eligible (insufficient history / ADV warm-up).
     assert not uni.iloc[:30].any().any()
     assert uni.iloc[40:].sum(axis=1).max() <= 10
+
+
+def test_universe_pointwise_no_lookahead():
+    """Universe on date t must not use volume from date t (uses shift(1))."""
+    idx = pd.date_range("2024-01-01", periods=60)
+    price = pd.DataFrame(1.0, index=idx, columns=["A", "B"])
+    dvol = pd.DataFrame({"A": 100.0, "B": 1.0}, index=idx)
+    dvol.loc[idx[40]:, "B"] = 1000.0                       # B's volume jumps on day 40
+    uni = data.build_universe({"price": price, "dollar_volume": dvol}, top_n=1, adv_window=5, min_history=5)
+    # B's 5-day median passes A's once three of its last five days are big, which
+    # includes day 42's volume, so B can rank first from day 43, not day 42
+    assert uni["B"].idxmax() == idx[43] and uni["A"].iloc[42] and not uni["B"].iloc[42]
 
 
 if __name__ == "__main__":

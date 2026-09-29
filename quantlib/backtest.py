@@ -91,28 +91,6 @@ def run(
     )
 
 
-def fill_gap_starts(returns: pd.DataFrame, fallback: pd.DataFrame,
-                    price: pd.DataFrame | None = None) -> pd.DataFrame:
-    """``returns`` with the first day of each run of missing values taken from ``fallback``.
-
-    Made for perp returns, which the every-pair panels drop on days a contract
-    trades more than 20% away from spot or stops trading (data.archive_panels).
-    A position held into such a day still moved, on a crash day or into a
-    delisting, and the coin's spot move stands in for it. Later days in the
-    same gap stay missing, so a position that cannot be closed (run_limit_fills
-    needs a bar to fill) earns nothing while it waits; run_limit_fills settles
-    it if the gap lasts, which is what happens to a delisted perp.
-
-    With ``price`` (the same panel's prices), a day the contract trades again
-    but has no return yet, because its previous close was dropped, takes the
-    fallback too: a position still open then moved with it.
-    """
-    fill = returns.isna() & returns.shift(1).notna()
-    if price is not None:
-        fill |= returns.isna() & price.reindex_like(returns).notna()
-    return returns.fillna(fallback.reindex_like(returns).where(fill))
-
-
 def run_limit_fills(
     weights: pd.DataFrame,
     returns: pd.DataFrame,
@@ -136,7 +114,9 @@ def run_limit_fills(
     settled at its last price and dropped, as an exchange does with a
     delisted contract, so it cannot come back to life on a later contract
     under the same name (LUNA and the relaunched LUNA2); after a shorter gap
-    it carries on. Returns the result and the positions held.
+    it carries on, and earns the move across the gap if ``returns`` has it
+    (the perp_returns_traded panel of data.archive_panels does). Returns the
+    result and the positions held.
     """
     idx, cols = returns.index, returns.columns
     w = weights.reindex(index=idx, columns=cols).fillna(0.0).to_numpy()

@@ -73,10 +73,11 @@ def _base_symbol(pair: str, quote: str) -> str:
 
 
 def top_usdt_pairs(top_n: int = 150, quote: str = "USDT") -> list[str]:
-    """The ``top_n`` most-traded spot ``*USDT`` pairs by 24h quote volume.
+    """The ``top_n`` spot ``*USDT`` pairs by the 24h quote volume the ticker endpoint reports.
 
     Excludes stablecoins, wrapped assets, and leveraged tokens so the resulting
-    universe is real, unlevered spot exposures.
+    universe is real, unlevered spot exposures. The ranking can include pairs
+    that have stopped trading: 11 of the research list's 149 coins had.
     """
     tickers = _get_json(f"{BINANCE_BASE}/api/v3/ticker/24hr")
     rows = []
@@ -182,9 +183,12 @@ def fetch_funding(
     end: str | None = None,
     quote: str = "USDT",
 ) -> pd.DataFrame:
-    """Daily perp funding rates (sum of the day's 8h prints) per symbol.
+    """Daily perp funding rates (the sum of the day's prints) per symbol.
 
-    Positive = longs pay shorts. Symbols with no perp listing are skipped.
+    Prints come every 8 hours, or more often when Binance shortens the
+    interval in extreme markets. Positive = longs pay shorts. Symbols with no
+    perp under that exact name are skipped, including ones listed with a size
+    prefix (PEPE's perp is 1000PEPEUSDT).
     """
     start_ms = int(pd.Timestamp(start, tz="UTC").timestamp() * 1000)
     end_ts = pd.Timestamp(end, tz="UTC") if end else pd.Timestamp.now(tz="UTC").normalize()

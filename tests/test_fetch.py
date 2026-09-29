@@ -313,6 +313,26 @@ def test_perp_data_dropped_when_it_stops_tracking_spot():
     assert data.contract_size("1000SATS", "1000SATS") == 1 and data.contract_size("LUNA2", "LUNA") == 1
 
 
+def test_traded_panels_keep_what_a_held_contract_did():
+    idx = pd.date_range("2024-03-01", periods=12)
+    cols = pd.MultiIndex.from_product([["A", "B"], ["price", "volume", "taker", "open", "high", "low"]])
+    spot = pd.DataFrame(1.0, index=idx, columns=cols)
+    perp = pd.DataFrame(1.0, index=idx, columns=cols)
+    # A: 50% above spot on day 2, then a three-day break, back far from spot on day 7
+    perp[("A", "price")] = [1.0, 1.0, 1.5, 1.2, np.nan, np.nan, np.nan, 1.8, 1.8, 1.8, 1.8, 1.8]
+    perp.loc[idx[-2:], ("A", "volume")] = 0.0              # then delisted: frozen zero-volume bars
+    perp[("B", "price")] = [1.0, 1.1, np.nan, np.nan, np.nan, np.nan, 2.2, 2.2, 2.2, 2.2, 2.2, 2.2]
+    funding = pd.DataFrame(-0.01, index=idx, columns=["A", "B"])
+    p = data.archive_panels(spot, perp, funding, {"A": "A", "B": "B"})
+    assert np.isnan(p["perp_returns"]["A"].iloc[2]) and np.isnan(p["funding"]["A"].iloc[2])   # out of the signal
+    t = p["perp_returns_traded"]["A"]
+    assert np.isclose(t.iloc[2], 0.5) and np.isclose(t.iloc[3], -0.2)   # but a held contract still moved
+    assert np.isclose(t.iloc[7], 1.8 / 1.2 - 1)             # across the three-day break
+    assert p["funding_traded"]["A"].iloc[2] == -0.01 and p["funding_traded"]["A"].iloc[-2:].isna().all()
+    assert p["perp_price_traded"]["A"].iloc[-2:].isna().all() and t.iloc[-2:].isna().all()
+    assert np.isnan(p["perp_returns_traded"]["B"].iloc[6])  # a four-day break is not bridged
+
+
 def test_short_days_flags_days_not_yet_published():
     idx = pd.date_range("2026-10-01", periods=12)
     cols = pd.MultiIndex.from_product([[f"C{i}" for i in range(50)], ["price", "volume"]])
@@ -366,7 +386,8 @@ if __name__ == "__main__":
                test_read_archive_klines_both_layouts, test_read_archive_funding_daily_sum,
                test_archive_keys_daily_files_only_for_live_pairs, test_archive_list_follows_pages,
                test_archive_download_quotes_non_ascii_names, test_archive_panels_join_contracts_without_a_fake_return,
-               test_perp_data_dropped_when_it_stops_tracking_spot, test_short_days_flags_days_not_yet_published,
+               test_perp_data_dropped_when_it_stops_tracking_spot, test_traded_panels_keep_what_a_held_contract_did,
+               test_short_days_flags_days_not_yet_published,
                test_fill_short_days_reads_the_daily_files_of_a_hole, test_leveraged_tokens_and_perp_names]:
         fn()
         print(f"ok {fn.__name__}")

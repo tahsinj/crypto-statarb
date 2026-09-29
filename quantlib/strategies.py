@@ -142,8 +142,9 @@ def carry_weights(
     """Carry target weights: short high funding, long low funding.
 
     weighting='zscore' is the frozen research rule. weighting='rank' uses the
-    cross-sectional rank instead, so no single coin can take more than a few
-    percent of the book (v2).
+    cross-sectional rank instead (v2): with 40 or more coins no single coin gets
+    more than about 5% of the sleeve, though with only a handful, as in the
+    first weeks of funding data, each side is still one or two coins.
     """
     fuv = universe & funding.notna()
     smooth_fund = funding.rolling(smooth).mean()
@@ -163,7 +164,7 @@ def carry_sleeve(
     smooth: int = 7,
     cost_bps: float = 7.0,
     weighting: str = "zscore",
-    fallback_returns: pd.DataFrame | None = None,
+    pnl_funding: pd.DataFrame | None = None,
 ) -> pd.Series:
     """Short high funding, long low funding (notebook 04 selection, P1 k=7).
 
@@ -175,20 +176,19 @@ def carry_sleeve(
     sleeve_carry.parquet. ``returns`` can be spot or perp returns; the research
     used spot. weighting='rank' is the v2 rule (see carry_weights).
 
-    ``fallback_returns`` fills in a coin's return on the first day of each gap
-    in ``returns`` (backtest.fill_gap_starts). The every-pair perp panels drop a
-    contract's data on days it trades more than 20% away from spot, so a coin
-    the sleeve holds on such a day earns nothing, even on a crash day like
-    LUNA's in May 2022. Passing the spot returns gives it the coin's spot move
-    instead. On those panels the sleeve cannot hold a coin past that first
-    day, since the coin's funding is dropped on the same days. The default
-    leaves the gaps, as the first runs did.
+    ``pnl_funding`` is the funding a held position pays or receives, when it
+    differs from the funding the signal reads. The every-pair panels drop a
+    perp's data on days it trades more than 20% away from spot, which decides
+    what the sleeve can pick, but a position held into such a day still paid
+    or received its contract's funding and moved with its contract's price:
+    pass the panels' funding_traded here and perp_returns_traded as
+    ``returns`` (data.archive_panels). The default reads ``funding`` for both,
+    as the first runs did.
     """
     w = carry_weights(funding, universe, smooth, weighting)
-    if fallback_returns is not None:
-        returns = backtest.fill_gap_starts(returns, fallback_returns)
     res = backtest.run(w, returns, cost_bps)
-    fund_pnl = -(w.shift(1) * funding).sum(axis=1)
+    paid = funding if pnl_funding is None else pnl_funding.reindex_like(funding)
+    fund_pnl = -(w.shift(1) * paid).sum(axis=1)
     net = res.net_returns + fund_pnl
     return net.rename("carry")
 
@@ -211,16 +211,20 @@ def carry_sleeve(
 
 V2_START = "2026-09-28"
 
-# Added after v2's first run and before any test result was computed: the
-# measurement fix spot_fallback=True, which notebook 12 uses. It changes how
-# P&L is counted on the few days a held perp's data is dropped, not what the
-# sleeves trade. The other fix made then, filling two holes in the archive's
-# 2022 perp files, is in the data (notebook 09); it gives Carry funding it was
-# missing, so it also changes what Carry holds for about a week after each
-# hole. Added later: "none chosen by performance" above means none was chosen
-# on v2's own results. The equal weights were picked on the frozen book's dev
-# and gate results, and rank weights also answer the DEXE case of the forward
-# window (notebook 08).
+# Added after v2's first run, once its test window had opened but before any
+# test result was computed: how a held Carry position is measured on a day the
+# 20% rule drops its perp's data. It first took the coin's spot move
+# (committed 2026-09-28 UTC); since 2026-09-29 it earns the contract's own
+# return and funding, or nothing once the contract has stopped trading
+# (v2_sleeves' pnl_funding with the *_traded panels), which notebook 12 uses.
+# That changes what v2 earns on a few days, not what it picks. The other fix,
+# filling two holes in the archive's 2022 perp files (2026-09-29), is in the
+# data (notebook 09); it gives Carry funding it was missing, so it also
+# changes what Carry holds for about a week after each hole. Added later:
+# "none chosen by performance" above means none was chosen on v2's own
+# results. The equal weights were picked on the frozen book's dev and gate
+# results, and rank weights also answer the DEXE case of the forward window
+# (notebook 08).
 
 
 def v2_sleeves(
@@ -230,17 +234,21 @@ def v2_sleeves(
     funding: pd.DataFrame,
     universe: pd.DataFrame,
     cost_bps: float = 7.0,
-    spot_fallback: bool = False,
+    pnl_funding: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """The two v2 sleeves: Orderflow (unchanged rule) and rank-weighted Carry on perp prices.
 
-    spot_fallback=True gives Carry a held coin's spot move on the day its perp
-    data drops out (see carry_sleeve). The default is v2 as registered and
-    first run in notebook 10.
+    As registered and first run (notebook 10), ``perp_returns`` and ``funding``
+    are the every-pair panels, which drop a perp's data on days it trades more
+    than 20% away from spot, so a coin held into such a day earns nothing. The
+    test (notebook 12) passes the panels' perp_returns_traded as
+    ``perp_returns`` and funding_traded as ``pnl_funding``: a held perp earns its
+    contract's own return and funding on every day it traded, and nothing once
+    it stopped. The signal still reads ``funding`` (see carry_sleeve).
     """
     of = orderflow_sleeve(taker_imbalance, returns, universe, cost_bps=cost_bps)
     ca = carry_sleeve(funding, perp_returns, universe, cost_bps=cost_bps, weighting="rank",
-                      fallback_returns=returns if spot_fallback else None)
+                      pnl_funding=pnl_funding)
     return pd.concat([of, ca], axis=1)
 
 

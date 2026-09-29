@@ -49,7 +49,9 @@ LEVERAGED_SUFFIXES = ("UP", "DOWN", "BULL", "BEAR")
 PERP_ALIASES = {"LUNA2": "LUNA"}
 # The research coin list: the 149 of the top 150 USDT pairs by 24h volume on
 # 2026-07-06 that returned data, as cached in data/raw/binance_1d.pkl.zip.
-# Notebook 00 fetches these by name, so a refetch asks for the same coins.
+# Eleven of them had in fact stopped trading before that day, from POLY
+# (2022-10) to TON (2026-06-30). Notebook 00 fetches these by name, so a
+# refetch asks for the same coins.
 RESEARCH_COINS = (
     "AAVE", "ACE", "ADA", "AIGENSYN", "AIXBT", "ALGO", "ALICE", "ALLO", "APT", "AR", "ARB",
     "ARPA", "ASTER", "ATM", "ATOM", "AVAX", "BCH", "BEL", "BERA", "BIO", "BNB", "BONK",
@@ -161,6 +163,7 @@ def archive_panels(
     funding: pd.DataFrame,
     perp_names: dict[str, str],
     max_basis: float = 0.2,
+    max_break: int = 3,
 ) -> dict[str, pd.DataFrame]:
     """Panels for the every-pair universe built from the archive (notebooks 09 and 12).
 
@@ -179,6 +182,13 @@ def archive_panels(
     bar every day for a perp that has been delisted. On days that fail, all of
     the perp's data, funding included, is dropped, and a return also needs the
     day before to pass. ``panels['perp_valid']`` records which days passed.
+
+    That rule decides which perps a strategy can pick. A position already held
+    earns what its contract did, so the same panels without it end in
+    ``_traded`` (perp_price, perp_high, perp_low, perp_returns, funding): each
+    contract's own bars and funding on every day it traded, however far from
+    spot. A traded return runs from the contract's last traded close; a break
+    of more than ``max_break`` days, such as a delisting, starts it afresh.
     """
     panels = to_panels(raw_spot)
     for field in ["high", "low"]:
@@ -210,6 +220,22 @@ def archive_panels(
                 cols[coin] = s if coin not in cols else cols[coin].combine_first(s)
         panels[name] = pd.DataFrame(cols, index=idx).sort_index(axis=1)
     panels["perp_valid"] = valid
+
+    traded = ((vol > 0) & (px > 0)).reindex(columns=valid.columns, fill_value=False)
+    close = px.reindex(columns=valid.columns).where(traded)
+    frames = {
+        "perp_price_traded": close,
+        "perp_high_traded": frames["perp_high"].reindex(columns=valid.columns).where(traded),
+        "perp_low_traded": frames["perp_low"].reindex(columns=valid.columns).where(traded),
+        "perp_returns_traded": (close / close.ffill(limit=max_break).shift(1) - 1).where(traded),
+        "funding_traded": frames["funding"].reindex(columns=valid.columns).where(traded),
+    }
+    for name, frame in frames.items():
+        cols = {}
+        for perp, coin in sorted(perp_names.items()):
+            if perp in valid.columns:
+                cols[coin] = frame[perp] if coin not in cols else cols[coin].combine_first(frame[perp])
+        panels[name] = pd.DataFrame(cols, index=idx).sort_index(axis=1)
     return panels
 
 

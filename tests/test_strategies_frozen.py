@@ -81,33 +81,31 @@ def test_carry_sleeve_receives_funding_on_shorts():
     assert s.dropna().mean() > 0, "carry sleeve should collect funding on shorts"
 
 
-def test_carry_fallback_fills_a_held_coins_missing_return():
-    """A held coin with no perp return earns its spot move with the fallback, and nothing without it."""
+def test_carry_pnl_funding_pays_a_held_coins_dropped_day():
+    """Funding dropped from the signal's data still counts for a coin held into that day."""
     price, rets, uni, _, fund = _toy()
     held = strategies.carry_weights(fund, uni).shift(1)
     day = rets.index[200]
     coin = held.loc[day].abs().idxmax()                    # the largest position held that day
-    perp = rets.copy()
-    perp.loc[day, coin] = np.nan                           # its perp data dropped for the day
-    gaps = strategies.carry_sleeve(fund, perp, uni)
-    filled = strategies.carry_sleeve(fund, perp, uni, fallback_returns=rets)
-    full = strategies.carry_sleeve(fund, rets, uni)
-    assert np.array_equal(filled.to_numpy(), full.to_numpy(), equal_nan=True)
-    assert np.isclose(full[day] - gaps[day], held.loc[day, coin] * rets.loc[day, coin])
-    assert np.allclose(gaps.drop(day).dropna(), full.drop(day).dropna())
+    dropped = fund.copy()
+    dropped.loc[day, coin] = np.nan                        # the 20% rule dropped its data that day
+    as_run = strategies.carry_sleeve(dropped, rets, uni)
+    paid = strategies.carry_sleeve(dropped, rets, uni, pnl_funding=fund)
+    assert np.isclose(as_run[day] - paid[day], held.loc[day, coin] * fund.loc[day, coin])
+    assert np.allclose(as_run.drop(day).dropna(), paid.drop(day).dropna())   # same signal, same trades
 
 
-def test_v2_spot_fallback_is_off_by_default():
+def test_v2_is_as_registered_by_default():
     price, rets, uni, imb, fund = _toy()
     perp = rets.copy()
-    perp.iloc[[150, 170, 190], :3] = np.nan                # one-day gaps in three coins' perp data
+    perp.iloc[[150, 170, 190], :3] = np.nan                # perp data dropped on a few days
     registered = strategies.v2_sleeves(imb, rets, perp, fund, uni)
     no_fill = strategies.carry_sleeve(fund, perp, uni, weighting="rank")
     assert np.array_equal(registered["carry"].to_numpy(), no_fill.to_numpy(), equal_nan=True)
-    fixed = strategies.v2_sleeves(imb, rets, perp, fund, uni, spot_fallback=True)
-    spot = strategies.carry_sleeve(fund, rets, uni, weighting="rank")
-    assert np.array_equal(fixed["carry"].to_numpy(), spot.to_numpy(), equal_nan=True)
-    assert fixed["orderflow"].equals(registered["orderflow"])
+    tested = strategies.v2_sleeves(imb, rets, rets, fund, uni, pnl_funding=2 * fund)
+    ref = strategies.carry_sleeve(fund, rets, uni, weighting="rank", pnl_funding=2 * fund)
+    assert np.array_equal(tested["carry"].to_numpy(), ref.to_numpy(), equal_nan=True)
+    assert tested["orderflow"].equals(registered["orderflow"])
 
 
 def test_rank_weights_keep_one_coin_from_taking_a_side():
@@ -144,8 +142,8 @@ if __name__ == "__main__":
                test_charge_resizing_costs_more_when_the_book_is_resized,
                test_orderflow_sleeve_runs_and_named,
                test_carry_sleeve_receives_funding_on_shorts,
-               test_carry_fallback_fills_a_held_coins_missing_return,
-               test_v2_spot_fallback_is_off_by_default,
+               test_carry_pnl_funding_pays_a_held_coins_dropped_day,
+               test_v2_is_as_registered_by_default,
                test_rank_weights_keep_one_coin_from_taking_a_side,
                test_carry_default_is_the_frozen_zscore_rule,
                test_v2_book_is_the_mean_of_its_sleeves]:
