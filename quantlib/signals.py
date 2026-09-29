@@ -37,7 +37,10 @@ def cross_sectional_zscore(signal: pd.DataFrame, mask: pd.DataFrame | None = Non
 
 
 def cross_sectional_rank(signal: pd.DataFrame, mask: pd.DataFrame | None = None) -> pd.DataFrame:
-    """Rank each row in [-0.5, 0.5], centred, NaNs preserved."""
+    """Each row's percentile rank minus 0.5, so in (-0.5, 0.5] with a mean of 1/(2n); NaNs preserved.
+
+    Not exactly centred; signal_to_weights demeans a long/short signal anyway.
+    """
     s = signal.where(mask) if mask is not None else signal.copy()
     r = s.rank(axis=1, pct=True)
     return r.sub(0.5)

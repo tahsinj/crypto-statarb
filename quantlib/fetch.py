@@ -14,11 +14,12 @@ Kraken or Binance). This module uses Binance's public REST endpoints:
 
 Each returns a date-indexed frame with a (symbol, field) column index.
 Notebook 00 calls them through ``refresh``, which caches the result under
-``data/raw/``::
+``data/raw/`` and, by default, reads that cache from then on::
 
-    from quantlib import fetch
+    from quantlib import data, fetch
     raw = fetch.refresh("data/raw/binance_1d.pkl.zip",
-                        lambda: fetch.fetch_binance(top_n=150, start="2018-01-01"))
+                        lambda: fetch.fetch_binance(symbols=list(data.RESEARCH_COINS),
+                                                    start="2018-01-01", end="2026-07-06"))
 """
 from __future__ import annotations
 
@@ -484,9 +485,9 @@ def fill_short_days(market: str, raw: pd.DataFrame, start: str, end: str, dest: 
                     quote: str = "USDT", workers: int = 16) -> pd.DataFrame:
     """Bars from the archive's daily files for the days short_days flags in ``raw``.
 
-    Some of the archive's monthly files miss a few days (about 50 perp files
-    lack the last three days of February 2022 or the first two of April 2022),
-    while its daily files for those days exist. For each flagged day this reads
+    Some of the archive's monthly files miss a few days (the February and April
+    2022 perp files of about 50 contracts lack the last three days of February
+    or the first two of April), while its daily files for those days exist. For each flagged day this reads
     the daily file of every pair that traded in the three days before but has no
     bar that day. Returns a frame shaped like ``raw`` holding only those bars,
     to combine with it, or an empty frame if nothing is flagged.
@@ -588,13 +589,15 @@ def save_raw(raw: pd.DataFrame, path: str | Path) -> Path:
 def refresh(
     path: str | Path,
     fetch_fn,
-    max_age_days: float = 1.0,
+    max_age_days: float = float("inf"),
     force: bool = False,
 ) -> pd.DataFrame:
-    """Cached fetch: reuse `path` if younger than max_age_days, else refetch.
+    """Cached fetch: reuse `path` unless it is older than max_age_days, else refetch.
 
-    On fetch failure with an existing cache, warn loudly and serve the cache;
-    with no cache, re-raise. Notebook 00 wraps every network call in this.
+    By default the cache never expires, so the data a notebook ran on stays
+    put; force=True refetches. On fetch failure with an existing cache, warn
+    loudly and serve the cache; with no cache, re-raise. Notebook 00 wraps
+    every network call in this.
     """
     from .data import load_raw  # local import to avoid a cycle at module load
 

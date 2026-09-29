@@ -42,7 +42,7 @@ def sortino(returns: pd.Series, rf: float = 0.0, periods_per_year: int = TRADING
     """Annualised mean return over the standard deviation of the losing periods.
 
     A common shortcut. The textbook downside deviation, the root mean square of
-    every period's shortfall below zero, gives somewhat higher ratios.
+    every period's shortfall below zero, gives somewhat different ratios.
     """
     r = returns.dropna() - rf / periods_per_year
     downside = r[r < 0].std()
