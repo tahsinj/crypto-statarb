@@ -36,9 +36,10 @@ from quantlib import backtest, metrics, plotting, robustness, signals, strategie
 PROC = ROOT / "data" / "processed"
 ALPHAS = ROOT / "alphas"
 OUT = ROOT / "reports" / "REPORT.pdf"
-# The PDF is dated by its data, not by when it was built, so the same inputs
-# give the same file, byte for byte; --check relies on it.
-BUILD_DATE = datetime(2026, 9, 26, tzinfo=timezone.utc)
+# The PDF carries a fixed creation date, the end of the day its content last
+# changed, so the same inputs give the same file byte for byte (--check relies
+# on it). Move it forward whenever the content changes.
+BUILD_DATE = datetime(2026, 9, 29, 23, 59, tzinfo=timezone.utc)
 
 DEV_START, DEV_END = "2020-01-01", "2024-07-31"
 GATE_START, GATE_END = "2024-08-01", "2025-06-30"
@@ -189,6 +190,10 @@ def compute(d: dict) -> dict:
     wf, ew = cp["walk_forward"], cp["equal_weight"]
     sleeves = d["sleeves_full"]
     bases = d["baselines_full"]
+    two = sleeves[["orderflow", "carry"]].loc[:LOCKBOX_END].dropna()
+    wf_two, _ = robustness.walk_forward_weights(two, train_days=756, step_days=63, min_train=252)
+    v_no_seas = {"wf": metrics.sharpe(wf_two.loc[LOCKBOX_START:LOCKBOX_END].dropna()),
+                 "ew": metrics.sharpe(two.mean(axis=1).loc[LOCKBOX_START:LOCKBOX_END])}
     ph = d["posthoc_book"]
     failures: list[str] = []
 
@@ -211,7 +216,7 @@ def compute(d: dict) -> dict:
             and (fam == "v2").sum() == 3):
         failures.append(f"  registry has {len(reg)} rows; expected {N_TRIALS} trials, 2 books and 3 v2 rows")
 
-    v: dict = {}
+    v: dict = {"no_seas": v_no_seas}
     v["book"] = {(b, w): perf(s.loc[sl], bench) for b, s in [("WF", wf), ("EW", ew)]
                  for w, sl in WINDOWS.items()}
     v["sleeve"] = {(n, w): perf(sleeves[n].loc[sl], bench) for n in sleeves.columns
@@ -446,6 +451,8 @@ def compute(d: dict) -> dict:
         ("deflated Sharpe, full", v["dsr_full"], 0.4901, 0.00005),
         ("deflated Sharpe, lockbox", v["dsr_lk"], 0.2049, 0.00005),
         ("deflated Sharpe, lockbox, first version's trials too", v["dsr_lk_all"], 0.1620, 0.00005),
+        ("lockbox WF Sharpe without Seasonality", v["no_seas"]["wf"], 2.1110, 0.0005),
+        ("lockbox EW Sharpe without Seasonality", v["no_seas"]["ew"], 1.3992, 0.0005),
         ("bootstrap CI low", v["ci"][0], -0.423, 0.0005),
         ("bootstrap CI high", v["ci"][1], 3.444, 0.0005),
         ("dev WF Sharpe", v["book"][("WF", "Dev")]["sharpe"], 0.397, 0.0005),
@@ -648,7 +655,7 @@ def doc_failures(v: dict, d: dict) -> list:
     ]
     readme += [f"or {v['dsr_lk_all']:.2f} counting the first version's configurations",
                f"the book's lockbox deflated Sharpe would be {v['dsr_lk_all']:.2f} instead of {v['dsr_lk']:.2f}",
-               f"{FIRST_VERSION_TRIALS} configurations in all, none in the registry"]
+               f"{FIRST_VERSION_TRIALS} configurations by its own count"]
     rfa, rfe = v["refits"]["0 as run"], v["refits"]["2 every pair"]
     readme.append(f"the research book's lockbox Sharpe ranges from {rfa[0]:.2f} to {rfa[1]:.2f} and the every-pair "
                   f"book's from {rfe[0]:.2f} to {rfe[1]:.2f}")
@@ -1000,8 +1007,9 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         f"between is in a registry, {reg_rows} rows in all: {N_TRIALS} research configurations, which "
         "the deflated Sharpe charges for, the book's two combination rules and v2's three rows. The "
         "post-hoc checks of section 5 and appendix A re-score frozen strategies and log nothing. The "
-        "two baselines kept parameters set before the registry existed, and each is logged as one "
-        "trial.\n\n"
+        "two baselines kept parameters set before the registry existed (section 2), and untilted "
+        "momentum is logged twice, as the baseline and as one of Seasonality's configurations, so "
+        f"the {N_TRIALS} research rows hold {N_TRIALS - 1} distinct strategies.\n\n"
         "On the research data the book made money on its lockbox: a walk-forward Sharpe of "
         f"{lk_wf['sharpe']:.2f} with a beta to BTC of {lk_wf['beta']:+.2f}. I then rebuilt the data "
         "from Binance's public archive to test that result, and found that the research coin list "
@@ -1128,17 +1136,23 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         "chosen on.\n\n"
         "Those settings come from the project's first version, built on CoinGecko data from "
         "2026-06-29 to 07-02, before this protocol existed. It picked them from small grids on "
-        "2020-2022 data and also tried a weekend tilt on momentum, 26 configurations in all, none "
-        "of them in the registry. It also ran both baselines as twsq alphas up to 2026-07-02, "
-        "momentum from 2024-08 and pairs from 2025-07 (Sharpe -0.29 and -1.11), so for these two "
-        "the lockbox was not unseen. Orderflow, Carry, the Seasonality rule and the combination rules "
-        "came later and were chosen on dev and gate only. Counting the first version's "
-        "configurations as trials, the book's lockbox deflated Sharpe would be "
-        f"{v['dsr_lk_all']:.2f} instead of {v['dsr_lk']:.2f} (section 4). The July part of the git "
-        "history was rebuilt in September 2026 from the original commits, keeping their dates: the "
-        "first version is left out, and each July commit carries the time of the last original "
-        "commit it combines, so the freeze commit also holds a fix to Carry's funding P&L made three "
-        "minutes after the freeze and before notebook 06 ran."
+        "2020-2022 data and also tested holding the market only at weekends: "
+        f"{FIRST_VERSION_TRIALS} configurations by its own count, and about ten exploratory variants "
+        "besides, none of them in the registry. It also ran both baselines as twsq alphas up to "
+        "2026-07-02, momentum from 2024-08 and pairs from 2025-07 (Sharpe -0.29 and -1.11), so for "
+        "these two the lockbox was not unseen, and the plan for this protocol, written before its data "
+        "was fetched, started from knowing that momentum had gone flat after mid-2024 and set out to "
+        "find signals alive in 2024-26. Orderflow, Carry, the Seasonality rule and the combination "
+        "rules came later and were chosen on dev and gate only. Counting the first version's "
+        f"{FIRST_VERSION_TRIALS} configurations as trials, the book's lockbox deflated Sharpe would be "
+        f"{v['dsr_lk_all']:.2f} instead of {v['dsr_lk']:.2f} (section 4).\n\n"
+        "The July part of the git history was rebuilt in September 2026 from the original commits. "
+        "They keep their original dates and results, but their prose and comments were rewritten "
+        "then and a few pieces tied to the first version were cut; the first version itself is left "
+        "out, and each July commit carries the time of the last original commit it combines. So the "
+        "freeze commit also holds a fix to Carry's funding P&L made three minutes after the freeze, "
+        "before notebook 06 ran, and the research commit holds only the final wording of "
+        "Seasonality's selection rule (section 3.1)."
     )
     pdf.table_block(perf_rows(base, [("momentum", "Dev"), ("momentum", "Gate"),
                                      ("reversal", "Dev"), ("reversal", "Gate")],
@@ -1182,7 +1196,14 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         f"The survivor halves momentum's exposure on weekdays: dev {sr(seas_dev)} and gate "
         f"{sr(seas_gate)}, against {sr(unt_dev)} and {sr(unt_gate)} for the untilted sleeve. "
         "Almost all of the equal-weight market's return came outside US hours, but trading on "
-        "that split lost money on the gate."
+        "that split lost money on the gate.\n\n"
+        "The neighbour rule was written two ways before any result: a neighbouring parameter that "
+        "is positive on both windows, and, in a comment in the selection cell, a neighbour that is "
+        "itself a survivor. No tilt meets the second, and eight minutes after the results were "
+        "logged the comment was changed to match the first (notebook 02). Without Seasonality the "
+        f"book's lockbox Sharpe would have been {v['no_seas']['wf']:.2f} walk-forward and "
+        f"{v['no_seas']['ew']:.2f} equal weight, against {lk_wf['sharpe']:.2f} and "
+        f"{book[('EW', 'Lockbox')]['sharpe']:.2f} as run."
     )
     pdf.table_block(family_rows(reg, "seasonality"), title="Seasonality configs", widths=(80, 20, 20))
     cal = v["calendar"]
@@ -1385,7 +1406,10 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         f"book's lockbox Sharpe ranges from {v['refits']['0 as run'][0]:.2f} to "
         f"{v['refits']['0 as run'][1]:.2f} and the every-pair book's from "
         f"{v['refits']['2 every pair'][0]:.2f} to {v['refits']['2 every pair'][1]:.2f}. The gap between "
-        "them holds for any start; the equal-weight book has no refit dates."
+        "them holds for any start; the equal-weight book has no refit dates. The every-pair books "
+        "start on the research's first Carry day, 2019-09-10, so that they refit on the research's "
+        "dates. The first run of notebook 11 started them in 2018, with zero Carry returns before any "
+        "funding data, and put the every-pair walk-forward lockbox Sharpe at 0.16."
     )
     rows = [["Sleeve, step", "Dev", "Gate", "Lockbox", "Forward"]]
     for s in SLEEVE_NAMES:
@@ -1401,9 +1425,9 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         "2025, and so were all five of Carry's: delisting casualties such as VIDT and BNX, which the "
         "z-score weights bought because their funding had turned negative. Measuring Carry on perp "
         "prices (step 3) helps it a little on the gate and the lockbox. Two things were fixed on the "
-        "way. About 50 of the archive's monthly perp files for February and April 2022 are missing "
-        "days (the last three of February, the first two of April), and notebook 09 now fills them "
-        "from the archive's daily files. And on a day the 20% rule drops, the first run gave a coin "
+        "way. The archive's monthly perp files for February and April 2022 are missing days for "
+        "about 50 contracts (the last three of February, the first two of April), and notebook 09 "
+        "now fills them from the archive's daily files. And on a day the 20% rule drops, the first run gave a coin "
         "Carry already held no funding (steps 2 and 3) and no price move (step 3). A held position "
         "earns what its contract did. On a few of those days the perp still traded, however far from "
         "spot, as in LUNA's and FTT's crashes in 2022 and OMG's steep discount to spot in November "

@@ -84,23 +84,32 @@ any test result was computed (see v2 below); as first run they were +1.39 and
   and 11 re-score the same frozen book on it after the fact and say so, and
   notebook 08 reruns it as a check.
 - Every configuration the research chose between is in a trial registry: 48
-  research configs, which the deflated Sharpe ratio charges for, plus the two
-  combination rules and the three v2 rows, 53 in all. The post-hoc checks of
+  research configs, which the deflated Sharpe ratio charges for (untilted
+  momentum is among them twice, as the baseline and as a Seasonality config),
+  plus the two combination rules and the three v2 rows, 53 in all. The post-hoc checks of
   notebooks 07 and 11 re-score frozen strategies and log nothing.
 - Before this protocol, a first version of the project (2026-06-29 to 07-02, on
   CoinGecko data) picked the baselines' parameters, momentum's 30-day lookback
-  and the pairs settings, from small grids on 2020-2022 data, and tried a
-  weekend tilt on momentum: 26 configurations in all, none in the registry. It
-  also ran both baselines as twsq alphas up to 2026-07-02, momentum from
-  2024-08 and pairs from 2025-07, so over most of the lockbox (Sharpe -0.29 and
-  -1.11). Orderflow, Carry, the Seasonality rule and the combination rules came
-  later and were chosen on dev and gate only. Counting those 26 configurations,
-  the book's lockbox deflated Sharpe would be 0.16 instead of 0.20. The July
-  git history was rebuilt in September 2026 from the original commits, keeping
-  their dates: the first version is left out, and each July commit carries the
-  time of the last original commit it combines, so the freeze commit also holds
-  a fix to Carry's funding P&L made three minutes after the freeze and before
-  notebook 06 ran.
+  and the pairs settings, from small grids on 2020-2022 data, and tested
+  holding the market only at weekends: 26 configurations by its own count, and
+  about ten exploratory variants besides, none in the registry. It also ran
+  both baselines as twsq alphas up to 2026-07-02, momentum from 2024-08 and
+  pairs from 2025-07, so over most of the lockbox (Sharpe -0.29 and -1.11). The
+  plan for this protocol, written before its data was fetched, started from
+  knowing that momentum had gone flat after mid-2024 (from those runs and a
+  first check on Binance data) and set out to find signals alive in 2024-26.
+  Orderflow, Carry, the Seasonality rule and the combination rules came later
+  and were chosen on dev and gate only. Counting the 26 configurations, the
+  book's lockbox deflated Sharpe would be 0.16 instead of 0.20.
+- The July git history was rebuilt in September 2026 from the original commits.
+  The commits keep their original dates and results, but their prose and
+  comments were rewritten then and a few pieces tied to the first version were
+  cut; the first version itself is left out, and each July commit carries the
+  time of the last original commit it combines. So the freeze commit also holds
+  a fix to Carry's funding P&L made three minutes after the freeze, before
+  notebook 06 ran, and the research commit holds only the final wording of
+  Seasonality's selection rule, changed eight minutes after its results were
+  logged (notebook 02 has the details).
 
 ## The book on the original coin list
 
@@ -158,20 +167,24 @@ Notebook 05's hourly reversal, rerun on every pair, has a bigger gross
 edge, about equal to its trading cost, but still loses money after costs in
 every configuration.
 
-Some fixes came after the first run of notebook 11. About 50 of the archive's
-monthly perp files for February and April 2022 are missing days (the last three
-of February, the first two of April); notebook 09 now fills them from the
-archive's daily files. Notebook 09 keeps a perp's data only on days it trades
-within 20% of spot, which decides the perps Carry can pick, and on such a day
-the first run also gave a coin Carry already held no funding, and in step 3 no
-price move either. A held position now earns what its contract did: its own
-move and funding when it traded, however far from spot (LUNA's and FTT's
-crashes), and nothing once it had stopped trading, as after a delisting. In the
-limit-order model a contract with no bar for more than three days is settled,
-so a relaunch under the same name (LUNA's) cannot revive an old position. And
-the pairs baseline picked its pairs with the close of the day whose return they
-then earned; picking them a day earlier moves its dev Sharpe from -0.40 to
--0.37.
+Some fixes came after the first run of notebook 11. The archive's monthly perp
+files for February and April 2022 are missing days for about 50 contracts (the
+last three of February, the first two of April); notebook 09 now fills them
+from the archive's daily files. Notebook 09 keeps a perp's data only on days
+it trades within 20% of spot, which decides the perps Carry can pick, and on
+such a day the first run also gave a coin Carry already held no funding, and
+in step 3 no price move either. A held position now earns what its contract
+did: its own move and funding when it traded, however far from spot (LUNA's
+and FTT's crashes), and nothing once it had stopped trading, as after a
+delisting. In the limit-order model a contract with no bar for more than three
+days is settled, so a relaunch under the same name (LUNA's) cannot revive an
+old position. And the pairs baseline picked its pairs with the close of the
+day whose return they then earned; picking them a day earlier moves its dev
+Sharpe from -0.40 to -0.37. Finally, the every-pair books now start on the
+research's first Carry day, 2019-09-10, so the walk-forward book refits on the
+research's dates; the first run started them in 2018, with zero Carry returns
+before any funding data, and put the every-pair walk-forward lockbox Sharpe at
+0.16.
 
 Adding the 82-day forward test (notebook 08) to the lockbox year, the frozen
 book's whole out-of-sample record is a Sharpe of 0.37 over 453 days.
@@ -196,8 +209,8 @@ next to the frozen book.
 
 - Funding carry weighted by rank and measured on perp prices holds up across
   every pair on dev and gate (Sharpe 1.68 and 2.42). With z-score weights it
-  piles into single crashing coins (report section 6.1 has DEXE) and loses on
-  every pair (section 5.2).
+  piles into single crashing coins (report section 6.1 has DEXE), and on
+  every pair it loses on the gate and the lockbox (section 5.2).
 - Following the 10-day taker-buy imbalance looked best on the research coin
   list (lockbox +1.95), but on every pair it loses on the gate and the
   lockbox.
