@@ -100,8 +100,8 @@ def fill_gap_starts(returns: pd.DataFrame, fallback: pd.DataFrame,
     A position held into such a day still moved, on a crash day or into a
     delisting, and the coin's spot move stands in for it. Later days in the
     same gap stay missing, so a position that cannot be closed (run_limit_fills
-    needs a bar to fill) is treated as settled at its last price, which is what
-    happens to a delisted perp.
+    needs a bar to fill) earns nothing while it waits; run_limit_fills settles
+    it if the gap lasts, which is what happens to a delisted perp.
 
     With ``price`` (the same panel's prices), a day the contract trades again
     but has no return yet, because its previous close was dropped, takes the
@@ -120,6 +120,7 @@ def run_limit_fills(
     high: pd.DataFrame,
     low: pd.DataFrame,
     cost_bps: float = 7.0,
+    settle_after: int = 3,
 ) -> tuple[BacktestResult, pd.DataFrame]:
     """Backtest where every trade is a limit order at the close it was decided on.
 
@@ -130,10 +131,12 @@ def run_limit_fills(
     cancelled, the old position is kept for the day, and the next close sends
     a new order toward the new target. Orders miss exactly when the price runs
     away from them, which run() cannot show. Costs are charged on filled
-    trades, on the day they fill. A coin with no bar cannot fill, so a
-    position in a contract that stops trading stays on the books; where its
-    returns are missing it earns nothing, as if settled at its last price.
-    Returns the result and the positions held.
+    trades, on the day they fill. A coin with no bar cannot fill. A position
+    whose contract has had no bar for more than ``settle_after`` days is
+    settled at its last price and dropped, as an exchange does with a
+    delisted contract, so it cannot come back to life on a later contract
+    under the same name (LUNA and the relaunched LUNA2); after a shorter gap
+    it carries on. Returns the result and the positions held.
     """
     idx, cols = returns.index, returns.columns
     w = weights.reindex(index=idx, columns=cols).fillna(0.0).to_numpy()
@@ -143,8 +146,11 @@ def run_limit_fills(
     held = np.zeros_like(w)
     traded = np.zeros(len(idx))
     q = np.zeros(len(cols))
+    gone = np.zeros(len(cols), dtype=int)                  # days in a row without a bar
     with np.errstate(invalid="ignore"):
         for t in range(1, len(idx)):
+            gone = np.where(np.isnan(c[t]), gone + 1, 0)
+            q = np.where(gone > settle_after, 0.0, q)      # settled at its last price
             order = w[t - 1] - q
             fill = ((order > 0) & (lo[t] < c[t - 1])) | ((order < 0) & (hi[t] > c[t - 1]))
             done = np.where(fill, order, 0.0)

@@ -324,6 +324,35 @@ def test_short_days_flags_days_not_yet_published():
     assert list(short.index) == list(pd.to_datetime(["2026-10-12", "2026-10-13"])) and (short == 0).all()
 
 
+def test_fill_short_days_reads_the_daily_files_of_a_hole():
+    idx = pd.date_range("2022-02-15", "2022-02-28")
+    cols = pd.MultiIndex.from_product([[f"C{i}" for i in range(20)], ["price", "volume", "taker", "open", "high", "low"]])
+    raw = pd.DataFrame(1.0, index=idx, columns=cols)
+    raw.loc["2022-02-26":] = np.nan                        # the monthly files stop on 02-25
+    requested = []
+
+    def fake_download(keys, dest, workers=16):             # the daily files exist in the archive
+        for k in keys:
+            requested.append(k)
+            day_ms = int(pd.Timestamp(k[-14:-4]).timestamp() * 1000)
+            path = Path(dest) / k
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _zip_csv(path, [_archive_row(day_ms, 2.0)])
+        return [Path(dest) / k for k in keys]
+
+    orig = fetch.archive_download
+    fetch.archive_download = fake_download
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            filled = fetch.fill_short_days("um", raw, "2022-02-15", "2022-02-28", td)
+    finally:
+        fetch.archive_download = orig
+    assert len(requested) == 60 and requested[0].startswith("data/futures/um/daily/klines/")
+    assert list(filled.index) == list(pd.date_range("2022-02-26", "2022-02-28"))
+    assert (filled.xs("price", axis=1, level=1) == 2.0).all().all()
+    assert fetch.short_days(raw.combine_first(filled), "2022-02-15", "2022-02-28").empty
+
+
 def test_leveraged_tokens_and_perp_names():
     bases = {"BTC", "ETH", "JUP", "SYRUP", "BTCUP", "ETHDOWN", "BULL", "SHIB", "SATS", "1000SATS"}
     flagged = {b for b in bases if data.is_leveraged_token(b, bases)}
@@ -338,6 +367,6 @@ if __name__ == "__main__":
                test_archive_keys_daily_files_only_for_live_pairs, test_archive_list_follows_pages,
                test_archive_download_quotes_non_ascii_names, test_archive_panels_join_contracts_without_a_fake_return,
                test_perp_data_dropped_when_it_stops_tracking_spot, test_short_days_flags_days_not_yet_published,
-               test_leveraged_tokens_and_perp_names]:
+               test_fill_short_days_reads_the_daily_files_of_a_hole, test_leveraged_tokens_and_perp_names]:
         fn()
         print(f"ok {fn.__name__}")

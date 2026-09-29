@@ -212,6 +212,23 @@ def test_fill_gap_starts_with_price_fills_the_day_a_contract_is_back():
     assert out["B"].iloc[2] == 0.05 and out["B"].iloc[3:].isna().all()  # delisted: settled after the first day
 
 
+def test_limit_fills_settle_a_contract_that_stops_trading():
+    """A position is dropped once its contract has gone more than settle_after days without a bar,
+    so a relaunch under the same name cannot revive it; after a shorter gap it carries on."""
+    idx = pd.date_range("2024-01-01", periods=12)
+    close = pd.DataFrame({"A": 100.0, "B": 100.0}, index=idx)
+    close.loc[idx[3]:idx[8], "A"] = np.nan                   # A: gone for six days, then relaunched
+    close.loc[idx[3]:idx[4], "B"] = np.nan                   # B: a two-day gap
+    w = pd.DataFrame({"A": [1.0] * 3 + [0.0] * 9, "B": 1.0}, index=idx)   # A's target drops to zero in the gap
+    high, low = close * 1.01, close * 0.99
+    high.loc[idx[9]:, "A"] = 99.0                            # after the relaunch a sell at the old close never fills
+    _, held = backtest.run_limit_fills(w, close.pct_change(), close, high, low, cost_bps=0)
+    assert held["A"].iloc[1:6].eq(1).all() and held["A"].iloc[6:].eq(0).all()
+    assert held["B"].iloc[1:].eq(1).all()
+    _, kept = backtest.run_limit_fills(w, close.pct_change(), close, high, low, cost_bps=0, settle_after=100)
+    assert kept["A"].iloc[9:].eq(1).all()                    # never settled: back on the new contract
+
+
 def test_impact_grows_with_size_and_with_small_volume():
     p = _toy_panels()
     rets = p["returns"]

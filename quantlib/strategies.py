@@ -211,10 +211,16 @@ def carry_sleeve(
 
 V2_START = "2026-09-28"
 
-# Added on 2026-09-27, after v2's first run and before its test started: the
+# Added after v2's first run and before any test result was computed: the
 # measurement fix spot_fallback=True, which notebook 12 uses. It changes how
 # P&L is counted on the few days a held perp's data is dropped, not what the
-# sleeves trade.
+# sleeves trade. The other fix made then, filling two holes in the archive's
+# 2022 perp files, is in the data (notebook 09); it gives Carry funding it was
+# missing, so it also changes what Carry holds for about a week after each
+# hole. Added later: "none chosen by performance" above means none was chosen
+# on v2's own results. The equal weights were picked on the frozen book's dev
+# and gate results, and rank weights also answer the DEXE case of the forward
+# window (notebook 08).
 
 
 def v2_sleeves(

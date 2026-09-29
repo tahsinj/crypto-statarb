@@ -476,6 +476,47 @@ def short_days(raw: pd.DataFrame, start: str, end: str, frac: float = 0.9, lookb
     return n[n < frac * best]
 
 
+def fill_short_days(market: str, raw: pd.DataFrame, start: str, end: str, dest: str | Path,
+                    quote: str = "USDT", workers: int = 16) -> pd.DataFrame:
+    """Bars from the archive's daily files for the days short_days flags in ``raw``.
+
+    Some of the archive's monthly files miss a few days (about 50 perp files
+    lack the last three days of February 2022 or the first two of April 2022),
+    while its daily files for those days exist. For each flagged day this reads
+    the daily file of every pair that traded in the three days before but has no
+    bar that day. Returns a frame shaped like ``raw`` holding only those bars,
+    to combine with it, or an empty frame if nothing is flagged.
+    """
+    px = raw.xs("price", axis=1, level=1)
+    wanted = {}
+    for day in short_days(raw, start, end).index:
+        recent = px.loc[day - pd.Timedelta(days=3):day - pd.Timedelta(days=1)].notna().any()
+        missing = px.loc[day].isna() if day in px.index else pd.Series(True, index=px.columns)
+        for base in px.columns[recent & missing]:
+            pair = f"{base}{quote}"
+            key = ARCHIVE_ROOTS[market].format(freq="daily") + f"{pair}/1d/{pair}-1d-{day:%Y-%m-%d}.zip"
+            wanted.setdefault(base, []).append(key)
+    if not wanted:
+        return pd.DataFrame(columns=raw.columns, dtype=float)
+    archive_download([k for keys in wanted.values() for k in keys], dest, workers=workers)
+    dest = Path(dest)
+    fields = list(dict.fromkeys(raw.columns.get_level_values(1)))
+    source = {"price": "close", "volume": "quote_volume", "taker": "taker_quote", "open": "open", "high": "high",
+              "low": "low"}
+    out = {}
+    for base, keys in wanted.items():
+        bars = read_archive_klines([dest / k for k in keys if (dest / k).exists()])
+        for field in fields:
+            if len(bars):
+                out[(base, field)] = bars[source[field]]
+    if not out:
+        return pd.DataFrame(columns=raw.columns, dtype=float)
+    df = pd.DataFrame(out).sort_index()
+    df.columns = pd.MultiIndex.from_tuples(df.columns)
+    df.index.name = "Date"
+    return df
+
+
 def fetch_yahoo(
     symbols: list[str],
     start: str = "2018-01-01",

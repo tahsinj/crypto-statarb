@@ -108,7 +108,8 @@ def deflated_sharpe(returns: pd.Series, n_trials: int = 1) -> float:
 
     Probability that the observed Sharpe beats the best Sharpe that n_trials
     zero-skill strategies would show by luck, allowing for skew and fat tails.
-    Between 0 and 1; 0.95 is the usual bar.
+    Between 0 and 1; 0.95 is the usual bar. With n_trials=1 it is the plain
+    probabilistic Sharpe ratio: the chance that the true Sharpe is above zero.
     """
     r = returns.dropna()
     n = len(r)
@@ -285,7 +286,8 @@ def summary(
         "Hit Rate": hit_rate(returns),
         "Sharpe t-stat": sharpe_tstat(returns),
         "Sharpe p-value": sharpe_pvalue(returns),
-        "Deflated Sharpe": deflated_sharpe(returns, n_trials=n_trials),
+        # with a single trial there is nothing to deflate: it is the probabilistic Sharpe
+        ("Deflated Sharpe" if n_trials > 1 else "Probabilistic Sharpe"): deflated_sharpe(returns, n_trials=n_trials),
     }
     if turnover is not None:
         avg_to = turnover.reindex(returns.index).mean()

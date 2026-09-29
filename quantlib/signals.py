@@ -8,9 +8,9 @@ normalisation happen.
 Signals are not lagged here. The look-ahead-free contract is enforced once, in
 backtest.run, which lags weights before applying returns. Signals are "as of
 close t" using data through t. The rolling statistics meant as conditioners
-(ewm_vol, realized_vol, cross_sectional_dispersion, rolling_zscore) are the
-exception: by default they are shifted a day, so they only use data through
-t-1.
+are shifted a day by default: ewm_vol, realized_vol and
+cross_sectional_dispersion use data through t-1 only, and rolling_zscore
+scores day t's value against a mean and std through t-1.
 """
 from __future__ import annotations
 
