@@ -184,6 +184,10 @@ def carry_sleeve(
     pass the panels' funding_traded here and perp_returns_traded as
     ``returns`` (data.archive_panels). The default reads ``funding`` for both,
     as the first runs did.
+
+    On days before ``funding`` has any data the sleeve holds nothing, so on a
+    panel whose index starts earlier it returns 0 there; blank those days
+    before combining it with other sleeves (notebook 11 does).
     """
     w = carry_weights(funding, universe, smooth, weighting)
     res = backtest.run(w, returns, cost_bps)

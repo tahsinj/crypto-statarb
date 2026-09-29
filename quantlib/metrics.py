@@ -39,6 +39,11 @@ def sharpe(returns: pd.Series, rf: float = 0.0, periods_per_year: int = TRADING_
 
 
 def sortino(returns: pd.Series, rf: float = 0.0, periods_per_year: int = TRADING_DAYS) -> float:
+    """Annualised mean return over the standard deviation of the losing periods.
+
+    A common shortcut. The textbook downside deviation, the root mean square of
+    every period's shortfall below zero, gives somewhat higher ratios.
+    """
     r = returns.dropna() - rf / periods_per_year
     downside = r[r < 0].std()
     if downside == 0 or np.isnan(downside):
