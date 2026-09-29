@@ -22,10 +22,11 @@
 # year with corrected inputs; it changes nothing in the book and chooses
 # nothing. v2's rules were committed before this notebook was first run, so
 # none of it feeds into them. Two things found after that first run change
-# v2's numbers but not its rules: Carry now keeps a coin's spot move on the
-# days its perp data is dropped, and two holes in the archive's 2022 files
-# are filled, which gives Carry funding data it lacked on those days (step
-# 3, notebook 09 and the last section). No trials are logged.
+# v2's numbers but not its rules: a Carry position held into a day notebook
+# 09's 20% rule drops its perp's data now earns what its contract did that
+# day, and two holes in the archive's 2022 files are filled, which gives
+# Carry funding data it lacked on those days (steps 2 and 3, notebook 09 and
+# the last section). No trials are logged.
 #
 # The steps build on each other:
 #
@@ -35,7 +36,10 @@
 # 1. The coin list's non-crypto assets taken out: six pegged assets and,
 #    from July 2026, five tokenized stocks.
 # 2. Every Binance pair, delisted coins included (JUP and SYRUP too), with
-#    funding for every perp instead of the 55 the research fetched.
+#    funding for every perp instead of the 55 the research fetched. Carry's
+#    signal reads only perp data that passes notebook 09's 20% rule, and a
+#    position it holds is paid its contract's funding on every day the
+#    contract traded.
 # 3. Carry measured on perp prices instead of spot.
 # 4. Orderflow and Carry trading with limit orders that fill only when the
 #    next day's price trades through them.
@@ -53,7 +57,7 @@ import pandas as pd
 
 import sys
 sys.path.insert(0, str(Path.cwd().parent if Path.cwd().name == "notebooks" else Path.cwd()))
-from quantlib import backtest, data, metrics, pairs, robustness, signals, strategies
+from quantlib import backtest, data, metrics, pairs, robustness, signals, strategies, trials
 
 ROOT = Path.cwd().parent if Path.cwd().name == "notebooks" else Path.cwd()
 PROC = ROOT / "data" / "processed"
@@ -70,7 +74,8 @@ BOOT = dict(n_boot=2000, method="block", seed=42)
 # +
 A = {n: pd.read_parquet(ALL / f"{n}.parquet") for n in
      ["price", "returns", "dollar_volume", "taker_imbalance", "high", "low", "universe",
-      "perp_price", "perp_high", "perp_low", "perp_returns", "perp_dollar_volume", "funding", "benchmarks"]}
+      "perp_price", "perp_high", "perp_low", "perp_returns", "perp_dollar_volume", "funding", "benchmarks",
+      "perp_price_traded", "perp_high_traded", "perp_low_traded", "perp_returns_traded", "funding_traded"]}
 RL = {n: pd.read_parquet(ALL / "research_list" / f"{n}.parquet")
       for n in ["price", "returns", "dollar_volume", "taker_imbalance", "funding"]}
 non_crypto = sorted(c for c in RL["price"].columns if c in data.PEGGED | data.TOKENIZED_STOCKS)
@@ -115,14 +120,13 @@ def from_funding_start(carry: pd.Series) -> pd.Series:
     return carry.where(carry.index >= FUNDING_START)
 
 
-def frozen_sleeves(p: dict, universe: pd.DataFrame, funding: pd.DataFrame, carry_returns=None) -> pd.DataFrame:
+def frozen_sleeves(p: dict, universe: pd.DataFrame, funding: pd.DataFrame, pnl_funding=None) -> pd.DataFrame:
     """The three frozen sleeves on a set of panels."""
     return pd.DataFrame({
         "seasonality": strategies.seasonal_momentum_sleeve(p["price"], p["returns"], universe),
         "orderflow": strategies.orderflow_sleeve(p["taker_imbalance"], p["returns"], universe),
         "carry": from_funding_start(strategies.carry_sleeve(
-            funding.reindex(columns=universe.columns),
-            p["returns"] if carry_returns is None else carry_returns, universe)),
+            funding.reindex(columns=universe.columns), p["returns"], universe, pnl_funding=pnl_funding)),
     })
 
 
@@ -154,7 +158,8 @@ print("tokenized stocks' universe days in the forward window (research list):", 
 
 # +
 uni2, fund2 = A["universe"], A["funding"].reindex(columns=A["universe"].columns)
-s2 = frozen_sleeves(A, uni2, fund2)
+paid2 = A["funding_traded"].reindex(columns=uni2.columns)      # what a held perp paid, whatever its basis
+s2 = frozen_sleeves(A, uni2, fund2, pnl_funding=paid2)
 step[2] = pd.concat([s2, book(s2)], axis=1)
 carry_names = (uni2 & fund2.notna()).sum(axis=1)
 print("coins Carry can trade, median by window:",
@@ -171,7 +176,7 @@ for name, w in [("orderflow", strategies.orderflow_weights(A["taker_imbalance"],
     held = w.shift(1)
     pnl = (held * A["returns"]).fillna(0.0)
     if name == "carry":
-        pnl = pnl - (held * fund2).fillna(0.0)
+        pnl = pnl - (held * paid2).fillna(0.0)
     by = pnl.loc[WINDOWS["gate"]].sum().sort_values()
     print(f"{name}: gate P&L before costs {by.sum():+.3f}")
     for coin, v in by.head(5).items():
@@ -181,62 +186,71 @@ pd.DataFrame(gate_rows).T
 
 # ## Step 3: Carry on perp prices
 #
-# The perp panels drop a contract's data on days it trades more than 20% away
-# from spot (notebook 09). A coin Carry holds on such a day keeps its spot
-# move for the day (`fallback_returns`). The first run of this notebook left
-# those days at zero, which dropped the moves of a few crash days. (Two holes
-# in the archive's own files, about 50 perps missing on 2022-02-26 to 02-28
-# and 2022-04-01 to 04-02, are filled from its daily files in notebook 09.)
+# Carry's price leg on its perps instead of spot. Notebook 09's 20% rule
+# drops a perp's data on days it trades far from spot or stops trading, and
+# the signal only reads what passes. A position held into such a day earns
+# what its contract did: its own move and funding if it traded, however far
+# from spot, and nothing if it did not, as when a perp is delisted and
+# settled at its last price (the `_traded` panels). The first run of this
+# notebook counted those days as zero, funding included. (Two holes in the
+# archive's own files, about 50 perps missing on 2022-02-26 to 02-28 and
+# 2022-04-01 to 04-02, are filled from its daily files in notebook 09.)
 
-perp_returns = A["perp_returns"].reindex(columns=uni2.columns)
-s3 = s2.assign(carry=from_funding_start(strategies.carry_sleeve(fund2, perp_returns, uni2,
-                                                                 fallback_returns=A["returns"])))
+perp_paid = A["perp_returns_traded"].reindex(columns=uni2.columns)
+s3 = s2.assign(carry=from_funding_start(strategies.carry_sleeve(fund2, perp_paid, uni2, pnl_funding=paid2)))
 step[3] = pd.concat([s3, book(s3)], axis=1)
 
-# The held positions the fallback fills, largest first (P&L as a share of
-# the sleeve), and the sleeve with and without it:
+# The held coin-days whose perp data the rule drops, and what the contract
+# did on the ones it traded (weights and moves as shares of the sleeve), then
+# Carry with those days at zero, as in the first run, and as measured here:
 
 # +
+perp_returns = A["perp_returns"].reindex(columns=uni2.columns)
 spot_r = A["returns"].reindex_like(perp_returns)
 held3 = strategies.carry_weights(fund2, uni2).shift(1).reindex_like(perp_returns)
-gap = held3.notna() & (held3 != 0) & perp_returns.isna() & spot_r.notna()
-gap_pnl = (held3 * spot_r).where(gap).stack().dropna()
-print(f"held coin-days with no perp return: {len(gap_pnl)}, their spot P&L {gap_pnl.sum():+.3f}")
-print(gap_pnl.sort_values().head(6).round(3).to_string())
-no_fill = from_funding_start(strategies.carry_sleeve(fund2, perp_returns, uni2))
-pd.DataFrame({"gaps left at zero": by_window(no_fill), "spot move on gaps": by_window(s3["carry"])}).T.round(2)
+gap = (held3.fillna(0.0) != 0) & perp_returns.isna()
+rows, cols = np.nonzero(gap.to_numpy())
+gaps = pd.DataFrame({(gap.index[i].date(), gap.columns[j]): {
+    "held": held3.iat[i, j], "spot move": spot_r.iat[i, j], "perp move": perp_paid.iat[i, j], "funding": paid2.iat[i, j]}
+    for i, j in zip(rows, cols)}).T
+live = gaps["perp move"].notna()
+print(f"held coin-days with the perp's data dropped: {len(gaps)}; the contract traded on {int(live.sum())} "
+      f"and did not trade on {int((~live).sum())}")
+print(gaps[live].round(4).to_string())
+at_zero = from_funding_start(strategies.carry_sleeve(fund2, perp_returns, uni2))
+pd.DataFrame({"dropped days at zero": by_window(at_zero), "held contracts' own data": by_window(s3["carry"])}).T.round(2)
 # -
 
 # ## Step 4: limit orders that have to be filled
 #
 # `backtest.run_limit_fills`: each day's trades are limit orders at that
 # day's close, and one fills only if the next day trades through its price.
-# Orderflow uses spot bars and Carry perp bars. A missed order is replaced
-# at the next close, so positions lag their targets on exactly the days the
-# price runs away. An order cannot fill on a contract whose perp data has
-# dropped out, so a Carry position there stays on the books. It keeps the
-# coin's spot move on the day the data drops out, as in step 3, and on the
-# day the contract trades again, whose return needs the dropped close
-# (`backtest.fill_gap_starts`). A contract with no bar for more than three
-# days is treated as delisted: the position is settled at its last price and
-# dropped (`backtest.run_limit_fills`), so a relaunch under the same name,
-# like LUNA's in 2022, does not bring it back.
+# Orderflow uses spot bars and Carry its perps' own bars on every day they
+# traded, as in step 3. A missed order is replaced at the next close, so
+# positions lag their targets on exactly the days the price runs away. An
+# order cannot fill on a contract that does not trade, so a position there
+# stays on the books; if the contract trades again within three days the
+# position takes the move across the gap. After more than three days it is
+# treated as delisted: settled at its last price and dropped, so a relaunch
+# under the same name, like LUNA's in 2022, does not bring it back. A day's
+# funding is credited to the position after that day's fill, although the
+# prints before a fill belong to the old position; the daily funding sums
+# cannot split the day.
 
 # +
 w_of = strategies.orderflow_weights(A["taker_imbalance"], uni2)
 of4, held_of = backtest.run_limit_fills(w_of, A["returns"], A["price"], A["high"], A["low"], cost_bps=7.0)
 w_ca = strategies.carry_weights(fund2, uni2)
-perp_px, perp_hi, perp_lo = (A[k].reindex(columns=uni2.columns) for k in ["perp_price", "perp_high", "perp_low"])
-perp_filled = backtest.fill_gap_starts(perp_returns, spot_r, price=perp_px)
-ca4, held_ca = backtest.run_limit_fills(w_ca, perp_filled, perp_px, perp_hi, perp_lo, cost_bps=7.0)
-carry4 = ca4.net_returns - (held_ca * fund2).sum(axis=1).reindex(ca4.net_returns.index)
+perp_px, perp_hi, perp_lo = (A[f"{k}_traded"].reindex(columns=uni2.columns) for k in ["perp_price", "perp_high", "perp_low"])
+ca4, held_ca = backtest.run_limit_fills(w_ca, perp_paid, perp_px, perp_hi, perp_lo, cost_bps=7.0)
+carry4 = ca4.net_returns - (held_ca * paid2).sum(axis=1).reindex(ca4.net_returns.index)
 s4 = s3.assign(orderflow=of4.net_returns.reindex(s3.index), carry=from_funding_start(carry4.reindex(s3.index)))
 step[4] = pd.concat([s4, book(s4)], axis=1)
 
 fills = {}
 for name, w, held, rets, close, hi, lo in [
         ("orderflow", w_of, held_of, A["returns"], A["price"], A["high"], A["low"]),
-        ("carry", w_ca, held_ca, perp_filled, perp_px, perp_hi, perp_lo)]:
+        ("carry", w_ca, held_ca, perp_paid, perp_px, perp_hi, perp_lo)]:
     target = w.reindex_like(held).fillna(0.0).shift(1)          # what run() holds each day
     traded = hi.reindex_like(held).notna() & lo.reindex_like(held).notna() & close.reindex_like(held).shift(1).notna()
     missed = (target - held).where(traded)                       # a coin with no bar cannot fill at all
@@ -432,20 +446,28 @@ pd.DataFrame(beta_rows).T.round(3)
 
 # ## v2 re-measured, dev and gate only
 #
-# v2's Carry sleeve, as registered and first run in notebook 10, has the same
-# gap as step 3, and ran on data with the two archive holes of 2022. Its test
-# uses `v2_sleeves(spot_fallback=True)` on the filled data from its first day,
-# 2026-09-28, so here are its dev and gate numbers both ways. The data is cut
-# at the end of the gate first, as in notebook 10, so v2 is still never run
-# on the lockbox or the forward window. With the registered rules, the filled
-# data changes Carry only in the weeks after the two holes, and nothing else.
+# v2's Carry sleeve, as registered and first run in notebook 10, ran on data
+# with the two archive holes of 2022, and a position it held into a day the
+# 20% rule drops earned nothing that day, as in the first run of step 3. Its
+# test (notebook 12) runs on the filled data, and such a position earns what
+# its contract did, as in steps 2 and 3. Here are its dev and gate numbers
+# each way. The data is cut at the end of the gate first, as in notebook 10,
+# so v2 is still never run on the lockbox or the forward window. With the
+# registered rules, the filled data changes Carry only in the weeks after the
+# two holes, and nothing else. The first check below stops if
+# `v2_dev_gate.parquet` no longer holds notebook 10's first run, as the
+# registry logged it.
 
 # +
-cut = {k: A[k].loc[:"2025-06-30"] for k in ["returns", "taker_imbalance", "universe", "perp_returns", "funding"]}
+cut = {k: A[k].loc[:"2025-06-30"] for k in ["returns", "taker_imbalance", "universe", "perp_returns", "funding",
+                                            "perp_returns_traded", "funding_traded"]}
 u = cut["universe"]
 v2_args = (cut["taker_imbalance"], cut["returns"], cut["perp_returns"].reindex(columns=u.columns),
            cut["funding"].reindex(columns=u.columns), u)
 registered = pd.read_parquet(PROC / "v2_dev_gate.parquet")
+logged = trials.load_registry(PROC / "trial_registry.csv").query("family == 'v2'")
+assert np.allclose(sorted(logged["dev_sharpe"]), sorted(metrics.sharpe(registered[c].loc[WINDOWS["dev"]].dropna())
+                                                        for c in ["orderflow", "carry", "v2"]), rtol=0, atol=1e-12)
 as_registered = strategies.v2_sleeves(*v2_args)
 assert as_registered["orderflow"].equals(registered["orderflow"])
 moved = (as_registered["carry"] - registered["carry"]).abs() > 1e-12
@@ -457,12 +479,15 @@ assert not (moved & ~in_holes).any(), "the filled data changed Carry outside the
 print(f"Carry days changed by the filled data: {int(moved.sum())}, from {moved[moved].index.min().date()} "
       f"to {moved[moved].index.max().date()}")
 as_registered["v2"] = strategies.v2_book(as_registered)
-v2_fixed = strategies.v2_sleeves(*v2_args, spot_fallback=True)
+v2_fixed = strategies.v2_sleeves(cut["taker_imbalance"], cut["returns"],
+                                 cut["perp_returns_traded"].reindex(columns=u.columns),
+                                 cut["funding"].reindex(columns=u.columns), u,
+                                 pnl_funding=cut["funding_traded"].reindex(columns=u.columns))
 v2_fixed["v2"] = strategies.v2_book(v2_fixed)
 v2_table = pd.DataFrame({(label, col): {w: metrics.sharpe(s[col].loc[WINDOWS[w]].dropna()) for w in ["dev", "gate"]}
                          for label, s in [("as registered, first run", registered),
                                           ("registered rules, holes filled", as_registered),
-                                          ("holes filled, spot move on gaps", v2_fixed)]
+                                          ("holes filled, held contracts' own data", v2_fixed)]
                          for col in ["v2", "orderflow", "carry"]}).T
 v2_table.round(3)
 # -
@@ -474,7 +499,7 @@ v2_table.round(3)
 # assets costs the walk-forward book a little, 1.46 to 1.26 on the lockbox.
 #
 # The coin list is. On every pair (step 2), the frozen book's lockbox Sharpe
-# is 0.36 walk-forward and -0.62 equal weight. Orderflow and Carry both lose
+# is 0.35 walk-forward and -0.62 equal weight. Orderflow and Carry both lose
 # money on the gate and the lockbox; Seasonality keeps its dev and gate
 # numbers and still loses on the lockbox. The research list was picked by
 # volume in July 2026, and 46% of the universe's coin-days before then
@@ -485,15 +510,18 @@ v2_table.round(3)
 # and BNX, which it bought because their funding had turned negative.
 #
 # The other steps matter less, with one exception. Perp prices help Carry a
-# little, though less than the first run of this notebook showed. That run left
-# 82 held coin-days with no perp return at zero. 56 of them fell on two holes
-# in the archive's own 2022 files, which notebook 09 now fills from its daily
-# files; the other 26 are crash and delisting days such as LUNA's (May 2022),
-# FTT's (November 2022) and VIDT's (April 2025), which now get the coin's spot
-# move. Together the two fixes take Carry's step-3 Sharpe from 0.40 to 0.27 on
-# dev and from -1.58 to -1.72 on the gate. Limit orders that have to be filled
-# hurt Orderflow even though about 99% of what it orders fills the next day.
-# The misses are the days the price ran away: where a buy missed, the coin rose
+# little on the gate and the lockbox and hardly at all on dev. The first run of
+# this notebook counted a day the perp data drops out as zero for a coin Carry
+# held, funding included. Some of those days fell on two holes in the archive's
+# own 2022 files, which notebook 09 now fills from its daily files. Of the 28
+# held coin-days left, the contract traded on 8, among them LUNA's and FTT's
+# crashes in 2022 and OMG's 27% discount to spot in November 2021, and those
+# now get the contract's own move and funding; on the other 20 it did not
+# trade, mostly because it had been delisted, and the position earns nothing.
+# Together the two fixes take Carry's step-3 Sharpe from 0.40 to 0.25 on dev
+# and from -1.58 to -1.51 on the gate. Limit orders that have to be filled hurt
+# Orderflow even though about 99% of what it orders fills the next day. The
+# misses are the days the price ran away: where a buy missed, the coin rose
 # 7.1% that day on average, and where a sell missed it fell 5.7%. Missing 0.3%
 # of the positions costs about 30 of Orderflow's 70 points of gross P&L on dev,
 # and its dev Sharpe falls from 0.44 to 0.09. Even on the research list, most
@@ -514,10 +542,10 @@ v2_table.round(3)
 # The frozen book's lockbox result came mostly from its coin list. v2
 # (notebook 10) was registered before these checks ran; it trades the
 # every-pair universe with rank-weighted Carry on perps, and its test is the
-# data from 2026-09-28 on. Its Carry sleeve had the same gaps as step 3.
-# With both fixes, which its test uses from the first day, v2 has a Sharpe of
-# 1.35 on dev and 1.11 on the gate (1.39 and 1.12 as registered), and its
-# Carry 1.69 and 2.41 (1.76 and 2.41).
+# data from 2026-09-28 on. Its Carry sleeve counted the dropped days as zero,
+# as the first run of step 3 did. With both fixes, which its test uses from
+# the first day, v2 has a Sharpe of 1.35 on dev and 1.13 on the gate (1.39 and
+# 1.12 as registered), and its Carry 1.68 and 2.42 (1.76 and 2.41).
 
 # ## Save for the report
 
@@ -530,7 +558,8 @@ capacity.rename_axis(["sleeve", "aum"]).to_csv(PROC / "realism_capacity.csv")
 pd.DataFrame({"as run": base, "charged": pairs_charged, "picked a day earlier": pairs_lagged,
               "both": pairs_both}).to_parquet(PROC / "realism_pairs.parquet")
 v2_fixed.to_parquet(PROC / "realism_v2.parquet")
-pd.DataFrame({"gaps at zero": no_fill, "spot move on gaps": s3["carry"]}).to_parquet(PROC / "realism_gaps.parquet")
+pd.DataFrame({"dropped days at zero": at_zero, "held contracts' own data": s3["carry"]}).to_parquet(
+    PROC / "realism_gaps.parquet")
 record.rename_axis("book").to_csv(PROC / "realism_oos.csv")
 pd.DataFrame(fills).T.rename_axis("sleeve").to_csv(PROC / "realism_fills.csv")
 pd.DataFrame(beta_rows).T.rename_axis("series").to_csv(PROC / "realism_beta.csv")

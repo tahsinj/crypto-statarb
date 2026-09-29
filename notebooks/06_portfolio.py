@@ -389,4 +389,9 @@ print(f"\nTotal rows: {len(reg_final)}")
 #
 # **Added later.** The block above that drops portfolio rows left by an
 # earlier run can never run: the 48-row check before it stops a rerun first.
-# The notebook is left as it ran; it is meant to run once.
+# The notebook is left as it ran; it is meant to run once. Two statements in
+# it are looser than they read. The parity check "to 1e-12" uses np.allclose,
+# which also allows a relative difference of 1e-5; the differences were in
+# fact zero, and notebook 08 repeats the check with no relative tolerance.
+# And Orderflow's k=10 had one tested neighbour, not two: k=5, positive on
+# both windows. The other tested value, k=1, lost on both (notebook 03).

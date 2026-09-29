@@ -18,16 +18,17 @@
 # lockbox; notebooks 07 and 11 re-score the frozen book on it afterwards and
 # say so, and notebook 08 reruns it as a check before the forward window.
 #
-# The cached data in this project was fetched on 2026-07-06 at about 15:20
-# UTC, so the last day in each panel (2026-07-06) is a partial day. `END` pins
-# the sample to that date; without it a rerun would quietly extend the data
-# and change every window that runs "to the end". The coin list is pinned too,
-# in `data.RESEARCH_COINS`: the top 150 pairs by volume that day, of which 149
-# returned data. The cache never expires, so a rerun reads it, and only
-# `FORCE = True` downloads again. A new download asks for the same coins but
-# cannot match the cache exactly: its last day would be complete rather than
-# partial, a pair Binance has since removed may no longer be served, and the
-# API refuses US IP addresses.
+# The cached data in this project was fetched on 2026-07-06 at about 15:20 UTC,
+# so the last day in each panel (2026-07-06) is a partial day. `END` pins the
+# sample to that date; without it a rerun would quietly extend the data and
+# change every window that runs "to the end". The coin list is pinned too, in
+# `data.RESEARCH_COINS`: the top 150 pairs by volume that day, of which 149
+# returned data; 11 of those had in fact stopped trading before then, the
+# earliest (POLY) in 2022. The cache never expires, so a rerun reads it, and
+# only `FORCE = True` downloads again. A new download asks for the same coins
+# but cannot match the cache exactly: its last day would be complete rather
+# than partial, a pair Binance has since removed may no longer be served, and
+# the API refuses US IP addresses.
 
 from pathlib import Path
 

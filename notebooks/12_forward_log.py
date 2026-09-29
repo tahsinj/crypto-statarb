@@ -16,10 +16,12 @@
 # # 12: Forward log
 #
 # The running out-of-sample record, extended once a month. To update it, set
-# END to the last complete UTC day, run the notebook and commit it. The
-# commit dates then show each month's numbers were written down before the
-# next month's data existed. If the archive has not published a day yet, the
-# notebook stops before logging anything; run it again a day later.
+# END to the last complete UTC day, run the notebook and commit it, so each
+# month's numbers are on record before the next month's data exists. Commit
+# dates are set by the machine that makes the commit, so for anyone else they
+# only count once each month's commit is pushed somewhere public. If the
+# archive has not published a day yet, the notebook stops before logging
+# anything; run it again a day later.
 #
 # Nothing here is tuned. Three records are kept:
 #
@@ -27,10 +29,12 @@
 #   did not have: its coin list, sleeves, walk-forward weights and costs.
 #   Notebook 08 ran its first 82 days.
 # - v2 (notebook 10), from 2026-09-28, the first full day after it was
-#   registered. It runs with `spot_fallback=True`: Carry keeps a held coin's
-#   spot move on the days its perp data is dropped, a measurement fix made
-#   after v2's first run and before any test result was computed (notebook
-#   11).
+#   registered. A Carry position held into a day notebook 09's 20% rule
+#   drops earns what its contract did: its own move and funding, or nothing
+#   once it has stopped trading. That measurement, and the filling of two
+#   holes in the archive's 2022 files, came after v2's first run, once its
+#   test window had opened but before any test result was computed
+#   (notebook 11).
 # - v2's two sleeves on their own, since notebook 10 found that its
 #   Orderflow sleeve fails the gate on the every-pair universe.
 #
@@ -71,7 +75,8 @@ def panels_from(name_dir: Path, names: list[str]) -> dict:
 
 
 SPOT = ["price", "returns", "dollar_volume", "taker_imbalance", "high", "low"]
-PERP = ["perp_price", "perp_high", "perp_low", "perp_returns", "perp_dollar_volume", "funding"]
+PERP = ["perp_price", "perp_high", "perp_low", "perp_returns", "perp_dollar_volume", "funding",
+        "perp_returns_traded", "funding_traded"]
 allp = panels_from(ALL, SPOT + PERP)
 rl = panels_from(ALL / "research_list", ["price", "returns", "dollar_volume", "taker_imbalance", "funding"])
 
@@ -170,8 +175,9 @@ print(f"v1 walk-forward vs notebook 08 over its 82 days: largest daily gap {agre
 
 uni_v2 = data.build_universe(allp, top_n=100, min_adv_usd=1_000_000)
 v2 = strategies.v2_sleeves(allp["taker_imbalance"], allp["returns"],
-                           allp["perp_returns"].reindex(columns=uni_v2.columns),
-                           allp["funding"].reindex(columns=uni_v2.columns), uni_v2, spot_fallback=True)
+                           allp["perp_returns_traded"].reindex(columns=uni_v2.columns),
+                           allp["funding"].reindex(columns=uni_v2.columns), uni_v2,
+                           pnl_funding=allp["funding_traded"].reindex(columns=uni_v2.columns))
 v2_book = strategies.v2_book(v2)
 # the months before V2_START are only history for v2's first positions: its
 # P&L on them is dropped here, before anything is recorded or shown

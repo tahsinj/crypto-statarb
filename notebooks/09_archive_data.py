@@ -15,10 +15,10 @@
 
 # # 09: Every Binance pair, delisted coins included
 #
-# The research coin list is the 150 USDT pairs with the most volume on the
-# day of the fetch, 2026-07-06. Coins that had been delisted by then, or had
-# just shrunk out of the top 150, are not in it, so the universe only ever
-# held coins that were still big in mid-2026.
+# The research coin list is the 150 USDT pairs with the most 24-hour volume
+# on the day of the fetch, 2026-07-06. Most coins that had been delisted by
+# then, and those that had shrunk out of the top 150, are not in it, so the
+# universe held mostly coins that were still big in mid-2026.
 # Binance's public data archive (data.binance.vision) keeps daily files for
 # delisted pairs as well. This notebook downloads every USDT pair and perp
 # from it, checks the result against the research data where the two
@@ -35,6 +35,8 @@
 # the forward test's. Here the leveraged-token check needs the rest of the
 # name to be a listed coin (BTCUP is BTC plus UP), and the pegged assets and
 # tokenized stocks are listed in `data.PEGGED` and `data.TOKENIZED_STOCKS`.
+# The list also held 11 coins that had stopped trading before the fetch, from
+# POLY (2022-10) to TON (2026-06-30).
 
 # +
 from pathlib import Path
@@ -59,7 +61,12 @@ RESEARCH_END = "2026-07-05"        # last full day of the research data
 # ## Which pairs
 
 # +
-spot_pairs = fetch.archive_pairs("spot")
+def listing(name: str, fn) -> pd.Series:
+    """An archive listing, cached like the data, so a rerun needs no network."""
+    return fetch.refresh(RAW / f"archive_listing_{name}.pkl.zip", lambda: pd.Series(fn()), max_age_days=float("inf"))
+
+
+spot_pairs = listing("spot", lambda: fetch.archive_pairs("spot")).tolist()
 bases = [p[:-4] for p in spot_pairs]
 keep = set(data.tradable_bases(bases))
 spot_keep = [p for p in spot_pairs if p[:-4] in keep]
@@ -73,8 +80,10 @@ print("research coins left out here:", sorted(set(research_coins) - keep))
 print("research coins the archive does not have:", sorted(set(research_coins) - set(bases)))
 
 # a new tokenized stock would show up as a B-suffixed listing from mid-2026
-first_month = {p[:-4]: min(fetch.archive_months("spot", p)) for p in spot_pairs if p[:-4].endswith("B")}
-unknown = sorted(b for b, m in first_month.items() if m >= pd.Period("2026-06", "M") and b not in data.TOKENIZED_STOCKS)
+first_month = listing("spot_b_first_month", lambda: {p[:-4]: str(min(fetch.archive_months("spot", p)))
+                                                     for p in spot_pairs if p[:-4].endswith("B")})
+unknown = sorted(b for b, m in first_month.items()
+                 if pd.Period(m, "M") >= pd.Period("2026-06", "M") and b not in data.TOKENIZED_STOCKS)
 print("B-suffixed pairs listed since June 2026 and not in data.TOKENIZED_STOCKS:", unknown)
 # -
 
@@ -97,7 +106,7 @@ research_extra = fetch.refresh(RAW / "archive_research_extra_1d.pkl.zip",
                                                            "2018-01-01", END, ARCHIVE, workers=24),
                                max_age_days=float("inf"))
 
-perp_pairs = fetch.archive_pairs("um")
+perp_pairs = listing("um", lambda: fetch.archive_pairs("um")).tolist()
 perp_names = data.perp_to_spot([p[:-4] for p in perp_pairs], sorted(keep))
 perp_keep = sorted(p + "USDT" for p in perp_names)
 raw_um = fetch.refresh(RAW / "archive_um_1d.pkl.zip",
@@ -112,7 +121,7 @@ print("perp bars taken from daily files:",
       {d.date(): int(n) for d, n in um_holes.xs("price", axis=1, level=1).notna().sum(axis=1).items()})
 raw_um = raw_um.combine_first(um_holes)
 
-fund_pairs = set(fetch.archive_pairs("funding"))
+fund_pairs = set(listing("funding", lambda: fetch.archive_pairs("funding")))
 fund_keep = [p for p in perp_keep if p in fund_pairs]
 funding_archive = fetch.refresh(RAW / "archive_funding.pkl.zip",
                                 lambda: fetch.fetch_archive("funding", fund_keep, "2019-09-01", END, ARCHIVE,
@@ -220,8 +229,8 @@ checks.astype({c: int for c in ["compared", "differ", "only in the first", "only
 # Perps are mapped to the spot coin they track: '1000SHIB' is SHIB, since
 # the contract holds a thousand coins. The mapping is checked by the
 # correlation of daily perp and spot returns, which should be close to 1.
-# Before any cleaning, eight contracts are far from it, and their perp/spot
-# price ratio wanders away from the contract size:
+# Before any cleaning, some contracts are far from it. The eight lowest, whose
+# perp/spot price ratio wanders away from the contract size:
 
 # +
 um_price = raw_um.xs("price", axis=1, level=1)
@@ -258,9 +267,13 @@ print(f"frozen zero-volume perp bars: {int(stale.to_numpy().sum()):,} in {int(st
 
 # `data.archive_panels` keeps a perp's data, funding included, only on days
 # when it traded and its price is within 20% of the spot price times the
-# contract size, and a perp return only when the day before passed too.
-# DEXE's perp closed 10.5% below spot at the worst of its July crash, so real
-# dislocations pass.
+# contract size, and a perp return only when the day before passed too. DEXE's
+# perp closed 10.5% below spot at the worst of its July crash, so it passes,
+# but a few real dislocations go past 20%: OMG's perp traded 27% below spot on
+# 2021-11-11, and LUNA's and FTT's crashes went past it too. The rule decides
+# which perps a strategy can pick. A position already held earns what its
+# contract did, so the panels ending in `_traded` keep each contract's own
+# bars and funding on every day it traded, however far from spot.
 
 # ## Gaps inside a coin's history
 #
@@ -317,7 +330,7 @@ print("universe coins with under 1% daily volatility over 90 days:", sorted(flat
 
 # ## What the research coin list missed
 #
-# The research list is the top 150 by volume in July 2026, so it only holds
+# The research list is the top 150 by volume in July 2026, so it holds mostly
 # coins that were still big then. Coins that were in the top 100 years
 # earlier and faded or were delisted are missing from its history.
 
@@ -340,7 +353,8 @@ pd.DataFrame({"universe days": missed.head(20),
 # Everything later notebooks need, under `data/processed/all_pairs/`.
 
 names = ["price", "returns", "dollar_volume", "taker_imbalance", "high", "low", "perp_price", "perp_high",
-         "perp_low", "perp_returns", "perp_dollar_volume", "funding"]
+         "perp_low", "perp_returns", "perp_dollar_volume", "funding", "perp_price_traded", "perp_high_traded",
+         "perp_low_traded", "perp_returns_traded", "funding_traded"]
 for name in names:
     panels[name].to_parquet(OUT / f"{name}.parquet")
 universe.to_parquet(OUT / "universe.parquet")

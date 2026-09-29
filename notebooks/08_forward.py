@@ -68,8 +68,10 @@ last_trade = {c: research_raw[c]["price"].dropna().index.max().date() for c in m
 print("last close in the research data for the missing coins:", last_trade)
 
 # The coins with no new data had all stopped trading on Binance by mid-April
-# 2026, so nothing tradable is lost. Coins listed after July are not added:
-# the coin list stays the one the research used.
+# 2026, so nothing tradable is lost. Four more (PHB, D, HIGH and TON) stopped
+# in May and June, before the forward window; their data here ends then.
+# Coins listed after July are not added: the coin list stays the one the
+# research used.
 
 # ## Check the new fetch against the cached data where they overlap
 # Past daily bars on Binance do not change, so every overlapping value
@@ -78,11 +80,11 @@ print("last close in the research data for the missing coins:", last_trade)
 common = [c for c in research_raw.columns if c in new_raw.columns]
 a = research_raw.loc[OVERLAP, common].to_numpy()
 b = new_raw.loc[OVERLAP, common].reindex(research_raw.loc[OVERLAP].index).to_numpy()
-daily_bad = int((~np.isclose(a, b, rtol=1e-9, atol=1e-12, equal_nan=True)).sum())
+daily_bad = int((~np.isclose(a, b, rtol=0, atol=0, equal_nan=True)).sum())
 print(f"daily overlap: {int(np.isfinite(a).sum()):,} values compared, {daily_bad} differ")
 fa = research_funding.loc[OVERLAP]
 fb = new_funding.reindex(columns=fa.columns).loc[OVERLAP].reindex(fa.index)
-funding_bad = int((~np.isclose(fa.to_numpy(), fb.to_numpy(), rtol=0, atol=1e-12, equal_nan=True)).sum())
+funding_bad = int((~np.isclose(fa.to_numpy(), fb.to_numpy(), rtol=0, atol=0, equal_nan=True)).sum())
 print(f"funding overlap: {int(np.isfinite(fa.to_numpy()).sum()):,} values compared, {funding_bad} differ")
 assert daily_bad == 0 and funding_bad == 0
 
@@ -129,7 +131,7 @@ checks = [("seasonality", seas, research["seasonality"]), ("orderflow", orderflo
           ("equal weight", ew, book["equal_weight"])]
 for name, mine, theirs in checks:
     both = pd.concat([mine, theirs], axis=1, sort=True).loc[:"2026-07-05"].dropna()
-    same = np.allclose(both.iloc[:, 0], both.iloc[:, 1], atol=1e-12)
+    same = np.array_equal(both.iloc[:, 0], both.iloc[:, 1])
     print(f"{name}: {len(both)} days, identical to the research up to 2026-07-05: {same}")
     assert same
 

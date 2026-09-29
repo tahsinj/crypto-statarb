@@ -157,9 +157,12 @@ reg = trials.load_registry(REGISTRY)
 print(f"registry: {len(reg)} rows, {int((reg['family'] == 'v2').sum())} of them v2")
 # -
 
-# Save for the report.
+# Save for the report. (The check was added later: the file is v2's first
+# run, which notebook 11 and the report compare against, so a rerun, on data
+# that has since changed, must not overwrite it.)
 
-pd.concat([sleeves, book], axis=1).to_parquet(PROC / "v2_dev_gate.parquet")
+if not (PROC / "v2_dev_gate.parquet").exists():
+    pd.concat([sleeves, book], axis=1).to_parquet(PROC / "v2_dev_gate.parquet")
 
 # ## After the first run
 #
@@ -185,6 +188,10 @@ pd.concat([sleeves, book], axis=1).to_parquet(PROC / "v2_dev_gate.parquet")
 # "Never run on the lockbox or the forward window" holds for every result:
 # notebook 12 uses those months only as history for v2's first positions and
 # drops v2's P&L on them before recording anything. Two fixes came after this
-# run and before any test result was computed, both measured in notebook 11:
-# Carry gets a coin's spot move on the days its perp data is left out, and two
-# holes in the archive's 2022 files are filled.
+# run, both measured in notebook 11. A Carry position held into a day the
+# rule in change 4 drops its perp's data now earns what its contract did: its
+# own move and funding, or nothing once it has stopped trading. The rule
+# still decides which perps Carry can pick. And two holes in the archive's
+# 2022 files are filled. Both were made on 2026-09-28 and 2026-09-29 UTC,
+# after the test window opened but before any test result was computed. The
+# save cell above only writes its file if it is not there yet.

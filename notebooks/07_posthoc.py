@@ -35,8 +35,9 @@
 # 5. Notebook 02's P2 and P3 calendar tests held each bucket a day late (P3
 #    an hour late). How do they score on the days they meant? (dev and gate)
 # 6. Holding constant target weights takes small daily trades as positions
-#    drift with prices, and the backtests never charge them. What would they
-#    cost Orderflow and Carry? (dev and gate)
+#    drift with prices, and the backtests never charge them, nor the books'
+#    daily moves of money between sleeves. What would they cost? (dev and
+#    gate)
 
 # +
 from pathlib import Path
@@ -227,7 +228,7 @@ for name, s, col in [("sleeve_baseline_momentum", base_mom, "momentum"),
                      ("sleeve_baseline_reversal", base_rev, "reversal")]:
     saved = pd.read_parquet(PROC / f"{name}.parquet")[col]
     both = pd.concat([s.loc[:"2025-06-30"], saved], axis=1, sort=True).dropna()
-    same = np.allclose(both.iloc[:, 0], both.iloc[:, 1], atol=1e-12)
+    same = np.array_equal(both.iloc[:, 0], both.iloc[:, 1])
     print(f"{name}: {len(both)} days, matches notebook 01 up to 2025-06-30: {same}")
     assert same
 
@@ -306,6 +307,36 @@ drift = pd.DataFrame({name: {w: drift_cost(t, returns.loc[upto]).loc[WINDOWS[w]]
 drift.round(4)
 # -
 
+# The books also move money between their sleeves. After a day each
+# sleeve's share of the book has drifted with its own return, and the next
+# day's book assumes it is back at its weight, which means resizing every
+# position in it. Before any netting between sleeves, at each sleeve's own
+# rate (20 bps for Seasonality, 7 for the others), as a yearly cost:
+
+# +
+mom_w = signals.signal_to_weights(np.sign(signals.trailing_return(price, 30, 1)).where(universe), universe,
+                                  long_short=False, gross_leverage=1.0)
+mom_scale = backtest.vol_target_scale(backtest.run(mom_w, returns, cost_bps=20).net_returns, 0.15)
+day_mult = pd.Series(np.where(mom_scale.index.dayofweek >= 5, 1.0, 0.5), index=mom_scale.index)
+gross = pd.DataFrame({       # each sleeve's gross position over the day, per dollar of the sleeve
+    "seasonality": mom_w.shift(1).abs().sum(axis=1).reindex(mom_scale.index) * mom_scale * day_mult,
+    "orderflow": targets["orderflow"].shift(1).abs().sum(axis=1),
+    "carry": targets["carry"].shift(1).abs().sum(axis=1)})
+rate = pd.Series({"seasonality": 20e-4, "orderflow": 7e-4, "carry": 7e-4})
+sleeves = pd.concat([seas, orderflow, carry], axis=1, sort=True).loc[upto].dropna()
+_, wf_weights = robustness.walk_forward_weights(sleeves, train_days=756, step_days=63, min_train=252)
+rebalance = {}
+for name, W in [("equal weight", pd.DataFrame(1 / 3, index=sleeves.index, columns=sleeves.columns)),
+                ("walk-forward", wf_weights.dropna())]:
+    s = sleeves.reindex(W.index)
+    R = (W * s).sum(axis=1)
+    moved = (W * s.sub(R, axis=0).abs()).div(1 + R, axis=0)   # share of the book moved into or out of each sleeve
+    cost = (moved * gross.reindex(W.index) * rate).sum(axis=1)
+    rebalance[name] = {w: cost.loc[WINDOWS[w]].mean() * 365 for w in ["dev", "gate"]}
+rebalance = pd.DataFrame(rebalance).T
+rebalance.round(4)
+# -
+
 # ## Save for the report
 
 pd.concat([seas.rename("seasonality"), orderflow.rename("orderflow"), carry.rename("carry")],
@@ -320,8 +351,9 @@ carry_table.rename_axis("window").reset_index().to_csv(PROC / "posthoc_carry_spl
 pd.DataFrame({"momentum": base_mom, "reversal": base_rev}).to_parquet(PROC / "baselines_full.parquet")
 calendar.rename_axis(["test", "timing"]).reset_index().to_csv(PROC / "posthoc_calendar.csv", index=False)
 drift.rename_axis("sleeve").reset_index().to_csv(PROC / "posthoc_drift.csv", index=False)
+rebalance.rename_axis("book").reset_index().to_csv(PROC / "posthoc_rebalance.csv", index=False)
 print("saved sleeves_full, posthoc_book, posthoc_cost_stress, posthoc_carry_split, baselines_full, "
-      "posthoc_calendar, posthoc_drift")
+      "posthoc_calendar, posthoc_drift, posthoc_rebalance")
 
 # ## Conclusion
 #
