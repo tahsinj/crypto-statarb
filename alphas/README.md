@@ -24,8 +24,8 @@ close, and any still unfilled the next day are cancelled before new ones go in.
 
 ## Results
 
-All three runs cover the same 701 days, 2024-08-06 to 2026-07-07, on $1M of
-capital each:
+All three runs cover the same 701 days, 2024-08-06 to 2026-07-07, on a fixed $1M
+of capital each (the annual return is the daily mean times 365):
 
 | Alpha | Ann. return | Ann. vol | Sharpe | Max DD | Turnover/day |
 |---|---:|---:|---:|---:|---:|

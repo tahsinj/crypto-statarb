@@ -362,6 +362,20 @@ def compute(d: dict) -> dict:
     v["fwd_coin"] = {"name": coin["coin"].iloc[0], "crash": coin.loc["2026-07-21", "return"],
                      "funding": coin.loc["2026-07-21":"2026-07-23", "funding (daily sum)"],
                      "held": held[held >= 0.47]}
+    # The same coin on its perp (notebook 09's panels): its own moves and its gap to spot.
+    cn = v["fwd_coin"]["name"]
+    perp_r = pd.read_parquet(ALL / "perp_returns_traded.parquet", columns=[cn])[cn].reindex(held.index)
+    basis = (pd.read_parquet(ALL / "perp_price_traded.parquet", columns=[cn])[cn]
+             / pd.read_parquet(ALL / "price.parquet", columns=[cn])[cn]).reindex(held.index)
+    v["fwd_coin"].update(spot_leg=(held * coin["return"]).sum(), perp_leg=(held * perp_r).sum(),
+                         fund_leg=-(held * coin["funding (daily sum)"]).sum(), discount=1 - basis.min())
+    if not v["fwd_coin"]["perp_leg"] > v["fwd_coin"]["spot_leg"]:
+        failures.append("  section 6.1 says the coin's price leg was better on its perp than on spot")
+    # beta to BTC alone, as in the forward table, over the research period
+    rb = pd.concat([wf, bench["BTC"]], axis=1, sort=True).dropna()
+    v["wf_beta_alone"] = np.cov(rb.iloc[:, 0], rb.iloc[:, 1])[0, 1] / rb.iloc[:, 1].var()
+    # the part of 2026-07-06 after the research fetch, which neither window holds
+    v["splice_gap"] = (1 + fb.loc["2026-07-06", "walk_forward"]) / (1 + wf.loc["2026-07-06"]) - 1
     # The days one coin held a whole side of Carry on dev, from the research panels.
     top_w = w_ca.abs().max(axis=1).loc[WINDOWS["Dev"]]
     whole = w_ca.loc[top_w.index[top_w >= 0.4999]].abs().idxmax(axis=1)
@@ -506,6 +520,12 @@ def compute(d: dict) -> dict:
         ("forward carry, other coins", fsplit[("carry", "all other coins")], -0.0282, 0.0005),
         ("forward carry, median largest weight", conc.loc["forward", "median largest weight"], 0.2693, 0.0005),
         ("forward DEXE crash day", v["fwd_coin"]["crash"], -0.8252, 0.0005),
+        ("forward DEXE price leg, spot", v["fwd_coin"]["spot_leg"], 0.0077, 0.0005),
+        ("forward DEXE price leg, perp", v["fwd_coin"]["perp_leg"], 0.1258, 0.0005),
+        ("forward DEXE funding leg", v["fwd_coin"]["fund_leg"], 0.4088, 0.0005),
+        ("forward DEXE largest discount to spot", v["fwd_coin"]["discount"], 0.1050, 0.0005),
+        ("research WF beta to BTC alone", v["wf_beta_alone"], -0.0393, 0.0005),
+        ("rest of 2026-07-06, WF book", v["splice_gap"], -0.0003, 0.00005),
         ("step 0b WF lockbox", v["steps"][("0b archive data", "walk_forward")]["Lockbox"], 1.4544, 0.0005),
         ("step 1 WF lockbox", v["steps"][("1 non-crypto out", "walk_forward")]["Lockbox"], 1.2625, 0.0005),
         ("step 2 WF lockbox", v["steps"][("2 every pair", "walk_forward")]["Lockbox"], 0.3543, 0.0005),
@@ -736,7 +756,7 @@ def describe(family: str, cfg: dict) -> str:
             return f"P1 carry, {cfg['smooth']}d funding"
         if p == "P2":
             return f"P2 reversal {cfg['lookback']}d, |funding z| > {cfg['fz_thresh']:g}"
-        return f"P3 funding change, {cfg['smooth']}d, {cfg['dir']}"
+        return f"P3 7-day change in {cfg['smooth']}d funding, {cfg['dir']}"
     if family == "v2":
         if cfg.get("sleeve") == "orderflow":
             return "Orderflow, every pair"
@@ -1408,8 +1428,9 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         f"{v['refits']['2 every pair'][0]:.2f} to {v['refits']['2 every pair'][1]:.2f}. The gap between "
         "them holds for any start; the equal-weight book has no refit dates. The every-pair books "
         "start on the research's first Carry day, 2019-09-10, so that they refit on the research's "
-        "dates. The first run of notebook 11 started them in 2018, with zero Carry returns before any "
-        "funding data, and put the every-pair walk-forward lockbox Sharpe at 0.16."
+        "dates; every-pair funding only starts on 2020-01-01, so Carry is flat until then. The first "
+        "run of notebook 11 started them in 2018, with nearly two years of flat Carry, and put the "
+        "every-pair walk-forward lockbox Sharpe at 0.16."
     )
     rows = [["Sleeve, step", "Dev", "Gate", "Lockbox", "Forward"]]
     for s in SLEEVE_NAMES:
@@ -1557,21 +1578,22 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         "sleeves and books match the research exactly. Nothing was tuned and no trials were "
         f"logged. The window runs from {FORWARD_START} to {FORWARD_END}, {n_fwd} days."
     )
-    rows = [["", "Return", "Ann. vol", "Sharpe", "Max DD", "Beta BTC"]]
+    rows = [["", "Return", "Ann. vol", "Sharpe", "Max DD", "Beta BTC alone"]]
     for name, s in F.items():
         bench_row = name in ("BTC", "Equal-weight market")
         rows.append([name, pct(s["total"]), pct(s["vol"]), sr(s["sharpe"]), pct(s["mdd"]),
                      "" if bench_row else sr(s["beta"])])
     pdf.table_block(rows, title=f"The frozen book on the forward window ({n_fwd} days; return is the "
-                                "total over the window)", widths=(58, 18, 18, 16, 18, 18))
+                                "total over the window, beta is to BTC alone)", widths=(56, 17, 17, 15, 17, 24))
     pdf.body(
         f"The walk-forward book lost {pct(-F['Book, walk-forward']['total'])} while BTC gained "
         f"{pct(F['BTC']['total'])}. Orderflow, with {pct(v['fwd_of_weight']['min'], 0)} to "
         f"{pct(v['fwd_of_weight']['max'], 0)} of the book's weight, lost {pct(-F['Orderflow']['total'])} "
         "after being the best sleeve on the lockbox. It has had runs like this before: "
         f"{pct(v['fwd_of_worse'])} of its 82-day stretches since 2020 were worse, about one in "
-        "twenty. Some of the loss was the market. Over this window the book's beta to BTC was "
-        f"{F['Book, walk-forward']['beta']:+.2f}, against about zero in the research, and beta times "
+        "twenty. Some of the loss was the market. Over this window the book's beta to BTC alone was "
+        f"{F['Book, walk-forward']['beta']:+.2f}, against {v['wf_beta_alone']:+.2f} over the research "
+        "period, and beta times "
         f"BTC's rise accounts for {-v['fwd_beta_part'] * 100:.1f} of the {-v['fwd_wf_sum'] * 100:.1f} "
         "points the book lost, counting in sums of daily returns."
     )
@@ -1587,9 +1609,12 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         f"its long side. Counted in sums of daily returns, {fc['name']} added "
         f"{pts(d['fwd_split'][('carry', fc['name'])])} points; all the other coins together lost "
         f"{pts(-d['fwd_split'][('carry', 'all other coins')])}, and trading costs took "
-        f"{pts(-d['fwd_split'][('carry', 'trading costs')])}. This is also the part of the "
-        "backtest to trust least: funding that negative comes with the perp trading far below "
-        "spot, and the backtest adds funding to spot returns without that gap."
+        f"{pts(-d['fwd_split'][('carry', 'trading costs')])}. The gain does not come from pairing "
+        "perp funding with spot prices. The perp closed up to "
+        f"{pct(fc['discount'])} below spot on the worst days and the gap closed while Carry held it, "
+        f"so on the perp itself the price leg was {pts(fc['perp_leg'])} points against "
+        f"{pts(fc['spot_leg'])} on spot, next to {pts(fc['fund_leg'])} from funding. What makes the "
+        "gain fragile is that one coin supplied it."
     )
     conc = d["fwd_conc"]
     pdf.table_block(
@@ -1623,7 +1648,9 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         "The lockbox year and the forward test are the only data the frozen book never influenced. "
         f"Together, as run, they give the walk-forward book a Sharpe of {oos['sharpe']:.2f} over "
         f"{oos['n']} days (t = {oos['t']:.1f}; block-bootstrap 95% interval {oos['ci'][0]:.2f} to "
-        f"{oos['ci'][1]:.2f}) and the equal-weight book {oos['sharpe_ew']:.2f}. In the forward window "
+        f"{oos['ci'][1]:.2f}) and the equal-weight book {oos['sharpe_ew']:.2f}. The rest of 2026-07-06 "
+        "after the research data was fetched falls in neither window "
+        f"({pct(v['splice_gap'], 2)} for the walk-forward book). In the forward window "
         "the walk-forward book's beta to BTC was lower than in "
         f"{pct(1 - fb_.loc['walk_forward', 'share of research windows lower'], 0)} of the earlier 82-day "
         f"stretches, and Orderflow's lower than in "
@@ -1701,7 +1728,8 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
     for name, r in tw.iterrows():
         rows.append([name, pct(r["ann_return"]), pct(r["ann_vol"]), sr(r["sharpe"]), pct(r["max_drawdown"]),
                      pct(r["avg_daily_turnover"], 0), pct(r["fees"])])
-    pdf.table_block(rows, title="twsq backtests, 2024-08-06 to 2026-07-07 (returns on $1M of capital)",
+    pdf.table_block(rows, title="twsq backtests, 2024-08-06 to 2026-07-07 (daily P&L on a fixed $1M; the "
+                                "annual return is the daily mean x 365)",
                     widths=(34, 16, 14, 13, 14, 16, 13))
     pdf.body(
         "On 20 large coins none of the three does much. SeasonalMomentum is roughly flat, which "
@@ -1722,6 +1750,9 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         "equal weight). v2 has no out-of-sample data yet.",
         "Approximate models. The fill model works from daily highs and lows, and the market-impact "
         "model is a rough guide that uses Binance volume only.",
+        "Free shorts. The spot sleeves (momentum, Orderflow, pairs) short coins without paying to "
+        "borrow them; backtest.run can charge a borrow rate, but Binance's margin rates are not in "
+        "the data.",
         "A hand-kept list. Tokenized stocks are excluded by a list in data.TOKENIZED_STOCKS; "
         "notebook 12 flags any new listing that looks like one.",
     ])

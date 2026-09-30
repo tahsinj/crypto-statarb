@@ -182,9 +182,9 @@ old position. And the pairs baseline picked its pairs with the close of the
 day whose return they then earned; picking them a day earlier moves its dev
 Sharpe from -0.40 to -0.37. Finally, the every-pair books now start on the
 research's first Carry day, 2019-09-10, so the walk-forward book refits on the
-research's dates; the first run started them in 2018, with zero Carry returns
-before any funding data, and put the every-pair walk-forward lockbox Sharpe at
-0.16.
+research's dates (every-pair funding only starts on 2020-01-01, so Carry is
+flat until then); the first run started them in 2018, with nearly two years of
+flat Carry, and put the every-pair walk-forward lockbox Sharpe at 0.16.
 
 Adding the 82-day forward test (notebook 08) to the lockbox year, the frozen
 book's whole out-of-sample record is a Sharpe of 0.37 over 453 days.
@@ -343,5 +343,6 @@ the `.ipynb` files keep the executed outputs.
 
 Binance is the only exchange, so taker flow has no second source; the samples
 are short (a one-year lockbox, an 82-day forward test, and v2 not yet tested);
-the fill and impact models are approximations; and the tokenized-stock list is
-kept by hand. Report section 9 has them.
+the fill and impact models are approximations; the spot sleeves short coins
+without paying to borrow them; and the tokenized-stock list is kept by hand.
+Report section 9 has them.
