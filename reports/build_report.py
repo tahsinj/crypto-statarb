@@ -39,7 +39,7 @@ OUT = ROOT / "reports" / "REPORT.pdf"
 # The PDF carries a fixed creation date, the end of the day its content last
 # changed, so the same inputs give the same file byte for byte (--check relies
 # on it). Move it forward whenever the content changes.
-BUILD_DATE = datetime(2026, 9, 29, 23, 59, tzinfo=timezone.utc)
+BUILD_DATE = datetime(2026, 9, 30, 23, 59, tzinfo=timezone.utc)
 
 DEV_START, DEV_END = "2020-01-01", "2024-07-31"
 GATE_START, GATE_END = "2024-08-01", "2025-06-30"
@@ -368,7 +368,8 @@ def compute(d: dict) -> dict:
     basis = (pd.read_parquet(ALL / "perp_price_traded.parquet", columns=[cn])[cn]
              / pd.read_parquet(ALL / "price.parquet", columns=[cn])[cn]).reindex(held.index)
     v["fwd_coin"].update(spot_leg=(held * coin["return"]).sum(), perp_leg=(held * perp_r).sum(),
-                         fund_leg=-(held * coin["funding (daily sum)"]).sum(), discount=1 - basis.min())
+                         fund_leg=-(held * coin["funding (daily sum)"]).sum(), discount=1 - basis.min(),
+                         legs_from=held.index.min(), legs_to=held.index.max())
     if not v["fwd_coin"]["perp_leg"] > v["fwd_coin"]["spot_leg"]:
         failures.append("  section 6.1 says the coin's price leg was better on its perp than on spot")
     # beta to BTC alone, as in the forward table, over the research period
@@ -520,7 +521,7 @@ def compute(d: dict) -> dict:
         ("forward carry, other coins", fsplit[("carry", "all other coins")], -0.0282, 0.0005),
         ("forward carry, median largest weight", conc.loc["forward", "median largest weight"], 0.2693, 0.0005),
         ("forward DEXE crash day", v["fwd_coin"]["crash"], -0.8252, 0.0005),
-        ("forward DEXE price leg, spot", v["fwd_coin"]["spot_leg"], 0.0077, 0.0005),
+        ("forward DEXE price leg, spot", v["fwd_coin"]["spot_leg"], 0.0082, 0.0002),
         ("forward DEXE price leg, perp", v["fwd_coin"]["perp_leg"], 0.1258, 0.0005),
         ("forward DEXE funding leg", v["fwd_coin"]["fund_leg"], 0.4088, 0.0005),
         ("forward DEXE largest discount to spot", v["fwd_coin"]["discount"], 0.1050, 0.0005),
@@ -1167,9 +1168,12 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         f"{FIRST_VERSION_TRIALS} configurations as trials, the book's lockbox deflated Sharpe would be "
         f"{v['dsr_lk_all']:.2f} instead of {v['dsr_lk']:.2f} (section 4).\n\n"
         "The July part of the git history was rebuilt in September 2026 from the original commits. "
-        "They keep their original dates and results, but their prose and comments were rewritten "
-        "then and a few pieces tied to the first version were cut; the first version itself is left "
-        "out, and each July commit carries the time of the last original commit it combines. So the "
+        "Each July commit carries the time of the last original commit it combines, and the "
+        "notebooks' saved outputs are the July runs, but the contents were edited then: prose and "
+        "comments were rewritten, some code was changed (notebook 01's file names and registry note "
+        "among it, its July outputs kept), a few later July fixes were folded into earlier commits "
+        "(the fetch's UTC dates, written on 07-07, sit in the first one), and a few pieces tied to the "
+        "first version were cut; the first version itself is left out. So the "
         "freeze commit also holds a fix to Carry's funding P&L made three minutes after the freeze, "
         "before notebook 06 ran, and the research commit holds only the final wording of "
         "Seasonality's selection rule (section 3.1)."
@@ -1219,7 +1223,7 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         "that split lost money on the gate.\n\n"
         "The neighbour rule was written two ways before any result: a neighbouring parameter that "
         "is positive on both windows, and, in a comment in the selection cell, a neighbour that is "
-        "itself a survivor. No tilt meets the second, and eight minutes after the results were "
+        "itself a survivor. No tilt meets the second, and about nine minutes after the results were "
         "logged the comment was changed to match the first (notebook 02). Without Seasonality the "
         f"book's lockbox Sharpe would have been {v['no_seas']['wf']:.2f} walk-forward and "
         f"{v['no_seas']['ew']:.2f} equal weight, against {lk_wf['sharpe']:.2f} and "
@@ -1440,7 +1444,10 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
     at_zero, own = v["gaps"]["dropped days at zero"], v["gaps"]["held contracts' own data"]
     pdf.body(
         "Orderflow and Carry lose money on the gate and the lockbox once every pair is in. "
-        "Seasonality keeps its dev and gate numbers and still loses on the lockbox. The coins that "
+        "Seasonality stays positive on dev and gate "
+        f"({sr(st[('2 every pair', 'seasonality')]['Dev'])} and {sr(st[('2 every pair', 'seasonality')]['Gate'])}, "
+        f"against {sr(st[('0 as run', 'seasonality')]['Dev'])} and {sr(st[('0 as run', 'seasonality')]['Gate'])} "
+        "as run) and still loses on the lockbox. The coins that "
         "did the damage are mostly ones the research list never had. On the gate, four of "
         "Orderflow's five worst coins were missing from it, OM above all, which collapsed in April "
         "2025, and so were all five of Carry's: delisting casualties such as VIDT and BNX, which the "
@@ -1611,10 +1618,10 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         f"{pts(-d['fwd_split'][('carry', 'all other coins')])}, and trading costs took "
         f"{pts(-d['fwd_split'][('carry', 'trading costs')])}. The gain does not come from pairing "
         "perp funding with spot prices. The perp closed up to "
-        f"{pct(fc['discount'])} below spot on the worst days and the gap closed while Carry held it, "
-        f"so on the perp itself the price leg was {pts(fc['perp_leg'])} points against "
-        f"{pts(fc['spot_leg'])} on spot, next to {pts(fc['fund_leg'])} from funding. What makes the "
-        "gain fragile is that one coin supplied it."
+        f"{pct(fc['discount'])} below spot on the worst days and the gap closed while Carry held it: "
+        f"from {fc['legs_from']:%Y-%m-%d} to {fc['legs_to']:%Y-%m-%d}, the price leg on the perp itself "
+        f"was {pts(fc['perp_leg'])} points against {pts(fc['spot_leg'])} on spot, next to "
+        f"{pts(fc['fund_leg'])} from funding. What makes the gain fragile is that one coin supplied it."
     )
     conc = d["fwd_conc"]
     pdf.table_block(

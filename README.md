@@ -73,7 +73,7 @@ any test result was computed (see v2 below); as first run they were +1.39 and
   small daily trades that bring drifted positions back to their targets are
   not charged: for Orderflow and Carry they would cost about 0.2% a year on
   dev, and the books' daily moves of money between sleeves 0.14% for the
-  equal-weight book and 0.05% for the walk-forward one (appendix A.2).
+  equal-weight book and 0.07% for the walk-forward one (appendix A.2).
 - The history is split in time, roughly 70/15/15, the usual train, validation
   and test split. Parameters were chosen on a development window (2020-01 to
   2024-07) and screened on a gate window (2024-08 to 2025-06), which also
@@ -102,14 +102,17 @@ any test result was computed (see v2 below); as first run they were +1.39 and
   and were chosen on dev and gate only. Counting the 26 configurations, the
   book's lockbox deflated Sharpe would be 0.16 instead of 0.20.
 - The July git history was rebuilt in September 2026 from the original commits.
-  The commits keep their original dates and results, but their prose and
-  comments were rewritten then and a few pieces tied to the first version were
-  cut; the first version itself is left out, and each July commit carries the
-  time of the last original commit it combines. So the freeze commit also holds
-  a fix to Carry's funding P&L made three minutes after the freeze, before
-  notebook 06 ran, and the research commit holds only the final wording of
-  Seasonality's selection rule, changed eight minutes after its results were
-  logged (notebook 02 has the details).
+  Each July commit carries the time of the last original commit it combines,
+  and the notebooks' saved outputs are the July runs, but the contents were
+  edited then: prose and comments were rewritten, some code was changed
+  (notebook 01's file names and registry note among it, its July outputs kept),
+  a few later July fixes were folded into earlier commits (the fetch's UTC
+  dates, written on 07-07, sit in the first one), and a few pieces tied to the
+  first version were cut; the first version itself is left out. So the freeze
+  commit also holds a fix to Carry's funding P&L made three minutes after the
+  freeze, before notebook 06 ran, and the research commit holds only the final
+  wording of Seasonality's selection rule, changed about nine minutes after its
+  results were logged (notebook 02 has the details).
 
 ## The book on the original coin list
 
