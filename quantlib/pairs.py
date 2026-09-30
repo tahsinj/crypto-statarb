@@ -88,7 +88,7 @@ def _pair_stream(logp, returns, a, b, beta, idx, entry, exit, zwin):
     raw[z.abs() < exit] = 0.0
     pos = raw.ffill().fillna(0.0)
 
-    wa = pos / (1 + beta)            # dollar-neutral, gross ~1 per active pair
+    wa = pos / (1 + beta)            # hedge-ratio weights: gross 1 per active pair, net (1 - beta) / (1 + beta)
     wb = -pos * beta / (1 + beta)
     ha, hb = wa.shift(1), wb.shift(1)
     pr = ha * returns[a] + hb * returns[b]

@@ -2,8 +2,8 @@
 
 Every function takes and returns dates x symbols panels. A signal is a
 cross-sectional score (higher = more attractive to be long); signal_to_weights
-turns one into weights and is the only place dollar-neutrality and leverage
-normalisation happen.
+and decile_weights turn one into weights, and they are where dollar-neutrality
+and leverage normalisation happen (pairs.py sizes its own legs).
 
 Signals are not lagged here. The look-ahead-free contract is enforced once, in
 backtest.run, which lags weights before applying returns. Signals are "as of
