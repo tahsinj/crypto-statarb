@@ -14,7 +14,7 @@ the full research trail, including the ideas that failed.
 - A research protocol that can fail: development, gate and lockbox windows in
   time order, a registry of the 53 configurations the research chose between
   (the two baselines kept parameters set before it), deflated Sharpe ratios
-  that charge for the 48 research ones, a lockbox the protocol opened once, and
+  that charge for the 48 research ones, a lockbox with one recorded run, and
   a second version registered in the repository before it was tested.
 - A survivorship check on its own result. The research coin list, the 150 USDT
   pairs with the most 24-hour volume on 2026-07-06, was mostly survivors: 46%
@@ -40,8 +40,8 @@ the full research trail, including the ideas that failed.
 | Frozen book, walk-forward, every pair | -0.20 | +1.85 | +0.35 | -0.90 |
 | Frozen book, equal weight, research coin list | +1.68 | +2.90 | +1.23 | +0.63 |
 | Frozen book, equal weight, every pair | +0.79 | -1.44 | -0.62 | +1.26 |
-| v2 book, every pair | +1.35 | +1.13 | not run | from 2026-09-28 |
-| v2 Carry sleeve, every pair | +1.68 | +2.42 | not run | from 2026-09-28 |
+| v2 book, every pair | +1.35 | +1.13 | not run | from 2026-10-01 |
+| v2 Carry sleeve, every pair | +1.68 | +2.42 | not run | from 2026-10-01 |
 
 Dev is 2020-01 to 2024-07, the gate 2024-08 to 2025-06, the lockbox 2025-07 to
 2026-07 and the forward window 2026-07-07 to 2026-09-26. The walk-forward book
@@ -78,8 +78,8 @@ any test result was computed (see v2 below); as first run they were +1.39 and
   and test split. Parameters were chosen on a development window (2020-01 to
   2024-07) and screened on a gate window (2024-08 to 2025-06), which also
   decided between configs that passed both, so the gate is not a clean
-  hold-out. The lockbox year (2025-07 to 2026-07) was run once by the
-  protocol, in notebook 06, after every choice had been made (the two
+  hold-out. The lockbox year (2025-07 to 2026-07) has one recorded run, in
+  notebook 06, made after every choice had been made (the two
   baselines had been run over it before; see the last point); notebooks 07
   and 11 re-score the same frozen book on it after the fact and say so, and
   notebook 08 reruns it as a check.
@@ -202,11 +202,13 @@ sleeve fails the gate (-0.78). These figures include two fixes made after v2's
 first run, both described above: a Carry position held into a day the 20% rule
 drops earns what its contract did, and the two archive holes of 2022 are
 filled. Both were made on 2026-09-29 (UTC; an earlier version of the first on
-2026-09-28), after v2's first test day had ended but before any test result
-was computed. As first run the
-figures were 1.39 and 1.12 (Carry 1.76 and 2.41), and the registry keeps
-those. Its test is every day from 2026-09-28, and notebook 12 adds each month
-next to the frozen book.
+2026-09-28), before any test result was computed. As first run the figures were
+1.39 and 1.12 (Carry 1.76 and 2.41), and the registry keeps those. Its test is
+every day from 2026-10-01, the first full day after the repository was first
+pushed to GitHub (2026-09-29, 15:17 UTC); it was set to start on 2026-09-28 and
+moved before any test day was computed, so that every test day comes after a
+public record of the rules and both fixes. Notebook 12 adds each month next to
+the frozen book.
 
 ## What worked and what didn't
 

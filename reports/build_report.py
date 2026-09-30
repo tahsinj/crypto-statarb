@@ -1046,7 +1046,7 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         f"{v2f[('Carry', 'Gate')]['sharpe']:.2f} on the gate at about "
         f"{pct(v2f[('Carry', 'Dev')]['vol'], 0)} volatility. A second version of the book built around "
         "it (v2) was registered in the repository before it was tested; its test is every day from "
-        "2026-09-28, recorded month by month in notebook 12."
+        f"{strategies.V2_START}, recorded month by month in notebook 12."
     )
     rows = [["Sharpe ratio", "Dev", "Gate", "Lockbox", "Forward"]]
     for key, lab in [("walk_forward", "walk-forward"), ("equal_weight", "equal weight")]:
@@ -1054,7 +1054,7 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
             rows.append([f"Frozen book, {lab}, {lst}"] + [sr(st[(step, key)][w]) for w in RWIN])
     for n, lab in [("Book", "v2 book"), ("Carry", "v2 Carry sleeve")]:
         rows.append([f"{lab}, every pair", sr(v2f[(n, "Dev")]["sharpe"]), sr(v2f[(n, "Gate")]["sharpe"]),
-                     "not run", "from 2026-09-28"])
+                     "not run", f"from {strategies.V2_START}"])
     pdf.table_block(rows, title="The main results at a glance", widths=(70, 22, 22, 22, 34))
     pdf.caption("Every pair: the daily top 100 chosen from all Binance pairs, delisted ones included "
                 "(section 5). The forward window is 2026-07-07 to 2026-09-26 (section 6). The "
@@ -1073,7 +1073,7 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         "A protocol that can fail. The history is split into development, gate and lockbox windows "
         "in time order, every configuration the research chose between is logged "
         f"({reg_rows} rows, the {N_TRIALS} research ones charged for with deflated Sharpe ratios), the "
-        "protocol opened the lockbox once, and v2's rules "
+        "lockbox has one recorded run, and v2's rules "
         "were committed before any v2 number existed. The problems below were found because of it.",
         "A survivorship check on its own result. The daily data was rebuilt from Binance's public "
         f"archive for {v['n_all']} coins, delisted ones included, and its prices and funding rates "
@@ -1140,8 +1140,8 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
     pdf.caption("The windows split the history roughly 70/15/15 in time, the usual train, "
                 "validation and test split. The gate also decided between configs that passed both "
                 "windows, so the chosen sleeves' gate numbers are not out of sample; the lockbox is. "
-                "The protocol read the lockbox once, in notebook 06, after every selection decision had "
-                "been made; the project's first version had already run the two baselines over it "
+                "The lockbox has one recorded run, in notebook 06, made after every selection decision; "
+                "the project's first version had already run the two baselines over it "
                 "(section 2). Appendix A and section 5 re-score the same frozen book with corrected "
                 "inputs and say so.")
 
@@ -1692,8 +1692,8 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         "pnl_funding and the archive's traded panels). And the two 2022 holes in the archive are "
         "filled. Neither changes v2's rules. The first changes what v2 earns on a few days; the "
         "second gives Carry funding data it was missing on those days of 2022, which also changes "
-        "its positions for about a week after each hole. Both were made on 2026-09-29 (UTC), after "
-        "v2's first test day had ended but before any test result was computed. An earlier version "
+        "its positions for about a week after each hole. Both were made on 2026-09-29 (UTC), before any "
+        "test result was computed and before the test began. An earlier version "
         "of the first, committed on 2026-09-28, gave a held coin its "
         "spot move instead, which is wrong both on days the perp trades far from spot and after a "
         "delisting. The table uses both fixes. "
@@ -1715,7 +1715,10 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         f"({sr(v2f[('Orderflow', 'Dev')]['sharpe'])} on dev, {sr(v2f[('Orderflow', 'Gate')]['sharpe'])} on "
         "the gate), so by notebook 03's rule it would not have been kept; it stays because v2's "
         "rules were fixed before this check. The three rows are in the registry.\n\n"
-        "The test is every day from 2026-09-28, the first full day after v2 was registered. Notebook "
+        f"The test is every day from {strategies.V2_START}, the first full day after the repository was first "
+        "pushed to GitHub (2026-09-29, 15:17 UTC). It was set to start on 2026-09-28, the day after the rules "
+        "were committed, and was moved before any test day was computed, because a commit's date is only "
+        "evidence for others once it is public. Notebook "
         "12 adds each month from the archive, delisted coins included, and reports v2's book and each "
         "sleeve alongside the frozen book. At a Sharpe near 1.5, a t-stat of 2 takes about two years "
         "of data."
