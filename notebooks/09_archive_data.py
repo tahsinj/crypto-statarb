@@ -91,9 +91,11 @@ print("B-suffixed pairs listed since June 2026 and not in data.TOKENIZED_STOCKS:
 #
 # About a hundred thousand small files, cached under `data/raw/archive/`, so
 # a rerun only fetches what is new. Spot bars start in 2018 like the
-# research data; perps and funding start in September 2019, when Binance
-# launched them. The archive writes funding a month at a time, so the days
-# after the last monthly file come from the API.
+# research data. Binance launched perps in September 2019, but the archive's
+# perp files start in January 2020, so the perp panels, funding included,
+# start on 2020-01-01; the 2019 funding fetched from the API below only serves
+# the rebuild of the research list. The archive writes funding a month at a
+# time, so the days after the last monthly file come from the API.
 
 # +
 raw_spot = fetch.refresh(RAW / "archive_spot_1d.pkl.zip",

@@ -65,8 +65,10 @@ assert pd.Timestamp(END) < pd.Timestamp.now(tz="UTC").tz_localize(None).normaliz
 
 # ## Data
 #
-# Notebook 09's panels, plus any days after 2026-09-26. The new days are
-# fetched with a week of overlap, and the overlap has to match.
+# Notebook 09's panels, plus any days after 2026-09-26. The new data is
+# fetched from 2026-09-01, so a pair listed in September, which had no monthly
+# file yet when notebook 09 listed the archive, keeps its first days; where
+# it overlaps notebook 09's data, it has to match.
 
 
 # +
@@ -81,7 +83,7 @@ allp = panels_from(ALL, SPOT + PERP)
 rl = panels_from(ALL / "research_list", ["price", "returns", "dollar_volume", "taker_imbalance", "funding"])
 
 if pd.Timestamp(END) > pd.Timestamp(BASE_END):
-    start = (pd.Timestamp(BASE_END) - pd.Timedelta(days=7)).strftime("%Y-%m-%d")
+    start = "2026-09-01"      # the month notebook 09's data ends in
     spot_pairs = fetch.archive_pairs("spot")
     keep = set(data.tradable_bases([p[:-4] for p in spot_pairs]))
     research_coins = list(rl["price"].columns)
@@ -216,6 +218,19 @@ monthly.index = monthly.index.strftime("%Y-%m")
 monthly.round(4)
 
 # Save the daily record (not committed; the executed notebook is the record).
+# Days already in the last saved record should not change; any that did, say
+# because the API lacked a day's funding when the month was first logged, are
+# listed first.
 
+# +
+last_path = PROC / "forward_log.parquet"
+if last_path.exists():
+    last = pd.read_parquet(last_path)
+    cols, days = last.columns.intersection(daily.columns), last.index.intersection(daily.index)
+    changed = ~np.isclose(daily.loc[days, cols].to_numpy(), last.loc[days, cols].to_numpy(),
+                          rtol=0, atol=1e-12, equal_nan=True)
+    revised = [d.date() for d in days[changed.any(axis=1)]]
+    print(f"days of the last saved record that changed: {len(revised)}", revised[:10])
 daily.to_parquet(PROC / "forward_log.parquet")
 print("saved forward_log.parquet through", END)
+# -

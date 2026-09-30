@@ -115,8 +115,10 @@ FUNDING_START = research["carry"].first_valid_index()   # the research Carry sta
 
 
 def from_funding_start(carry: pd.Series) -> pd.Series:
-    """Blank before funding data exists, as in the research, so the walk-forward
-    book starts on the same day and refits on the same dates."""
+    """Blank before the research Carry's first day, so the walk-forward book
+    starts on the same day as the research's and refits on the same dates.
+    Every-pair funding only starts on 2020-01-01 (notebook 09), so there Carry
+    holds nothing, and returns 0, from 2019-09-10 to 2019-12-31."""
     return carry.where(carry.index >= FUNDING_START)
 
 

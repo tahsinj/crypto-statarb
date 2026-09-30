@@ -275,9 +275,11 @@ print(f"coins with funding data in the universe, January 2020: {n_carry.min()} t
 #
 # The equal-weight book made 5.1%, but only because of Carry, and Carry's
 # 11.3% came from DEXE. The other coins together lost a little before costs.
-# The DEXE gain is also the part of the backtest to trust least: funding that
-# deep comes with the perp trading far below spot, and the backtest adds
-# funding to spot returns and ignores that gap.
+# The DEXE gain does not come from pairing perp funding with spot prices: on
+# the perp itself the price leg was better, not worse. The perp closed up to
+# 10.5% below spot on the worst days (notebook 09) and the discount closed
+# while Carry held it. What makes the gain fragile is that one coin supplied
+# it.
 #
 # Seasonality made 2.6%. With its resizing trades charged, the walk-forward
 # book loses 7.3% instead of 5.9%.

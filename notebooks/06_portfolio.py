@@ -396,4 +396,7 @@ print(f"\nTotal rows: {len(reg_final)}")
 # And Orderflow's k=10 had one tested neighbour, not two: k=5, positive on
 # both windows. The other tested value, k=1, lost on both (notebook 03).
 # "Opened once" holds for this protocol; the project's first version had run
-# the two baselines over most of the lockbox as twsq alphas (README).
+# the two baselines over most of the lockbox as twsq alphas (README). And the
+# parity check runs after the sleeves are built on the full panels, lockbox
+# days included, but before any lockbox performance is computed or shown;
+# that is what "before any lockbox data is used" above means.
