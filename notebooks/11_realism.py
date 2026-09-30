@@ -568,7 +568,7 @@ v2_table.round(3)
 # The frozen book's lockbox result came mostly from its coin list. v2
 # (notebook 10) was registered before these checks ran; it trades the
 # every-pair universe with rank-weighted Carry on perps, and its test is the
-# data from 2026-09-28 on. Its Carry sleeve counted the dropped days as zero,
+# data from 2026-10-01 on. Its Carry sleeve counted the dropped days as zero,
 # as the first run of step 3 did. With both fixes, which its test uses from
 # the first day, v2 has a Sharpe of 1.35 on dev and 1.13 on the gate (1.39 and
 # 1.12 as registered), and its Carry 1.68 and 2.42 (1.76 and 2.41).

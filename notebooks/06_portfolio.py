@@ -392,11 +392,11 @@ print(f"\nTotal rows: {len(reg_final)}")
 # The notebook is left as it ran; it is meant to run once. Two statements in
 # it are looser than they read. The parity check "to 1e-12" uses np.allclose,
 # which also allows a relative difference of 1e-5; the differences were in
-# fact zero, and notebook 08 repeats the check with no relative tolerance.
-# And Orderflow's k=10 had one tested neighbour, not two: k=5, positive on
-# both windows. The other tested value, k=1, lost on both (notebook 03).
-# "Opened once" holds for this protocol; the project's first version had run
-# the two baselines over most of the lockbox as twsq alphas (README). And the
-# parity check runs after the sleeves are built on the full panels, lockbox
-# days included, but before any lockbox performance is computed or shown;
-# that is what "before any lockbox data is used" above means.
+# fact zero, and notebook 08 repeats the check with no relative tolerance. And
+# Orderflow's k=10 had one tested neighbour, not two: k=5, positive on both
+# windows. The other tested value, k=1, lost on both (notebook 03). "Opened
+# once" means this notebook's one recorded run; the project's first version
+# had run the two baselines over most of the lockbox as twsq alphas (README).
+# And the parity check runs after the sleeves are built on the full panels,
+# lockbox days included, but before any lockbox performance is computed or
+# shown; that is what "before any lockbox data is used" above means.

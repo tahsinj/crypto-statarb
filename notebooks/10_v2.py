@@ -178,19 +178,22 @@ pd.concat([sleeves, book], axis=1).to_parquet(PROC / "v2_dev_gate.parquet")
 # each sleeve as well as the book, so Carry can be followed on its own, and
 # notebook 11 shows what the wider universe does to the frozen book.
 #
-# **Added later, the registered text above left as it was.** "None was
-# picked by comparing results" means none was picked on v2's own results:
-# change 5 was chosen on the frozen book's dev and gate results, and rank
-# weights also answer the DEXE case of the forward window (notebook 08).
-# "Never run on the lockbox or the forward window" holds for every result:
-# notebook 12 uses those months only as history for v2's first positions and
-# drops v2's P&L on them before recording anything. Two fixes came after this
-# run, both measured in notebook 11. A Carry position held into a day the
-# rule in change 4 drops its perp's data now earns what its contract did: its
-# own move and funding, or nothing once it has stopped trading. The rule
-# still decides which perps Carry can pick. And two holes in the archive's
-# 2022 files are filled. Both were made on 2026-09-29 (UTC; an earlier version
-# of the first, on 2026-09-28, used the coin's spot move), after v2's first
-# test day had ended but before any test result was computed. This notebook is
-# not meant to be rerun: on today's data it would write different numbers
-# over its saved file, which notebook 11 checks against the registry.
+# **Added later, the registered text above left as it was.** "None was picked
+# by comparing results" means none was picked on v2's own results: change 5
+# was chosen on the frozen book's dev and gate results, and rank weights also
+# answer the DEXE case of the forward window (notebook 08). "Never run on the
+# lockbox or the forward window" holds for every result: notebook 12 uses
+# those months only as history for v2's first positions and drops v2's P&L on
+# them before recording anything. Two fixes came after this run, both measured
+# in notebook 11. A Carry position held into a day the rule in change 4 drops
+# its perp's data now earns what its contract did: its own move and funding,
+# or nothing once it has stopped trading. The rule still decides which perps
+# Carry can pick. And two holes in the archive's 2022 files are filled. Both
+# were made on 2026-09-29 (UTC; an earlier version of the first, on
+# 2026-09-28, used the coin's spot move), before any test result was computed.
+# The test start then moved from 2026-09-28 to 2026-10-01, the first full day
+# after the repository was first pushed to GitHub (2026-09-29, 15:17 UTC), so
+# that every test day comes after a public record of these rules and of both
+# fixes; the first reading moves to 2027-10-01. This notebook is not meant to
+# be rerun: on today's data it would write different numbers over its saved
+# file, which notebook 11 checks against the registry.

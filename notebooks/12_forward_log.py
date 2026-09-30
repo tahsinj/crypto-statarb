@@ -28,13 +28,13 @@
 # - The frozen book (v1), from 2026-07-07, the first day the research data
 #   did not have: its coin list, sleeves, walk-forward weights and costs.
 #   Notebook 08 ran its first 82 days.
-# - v2 (notebook 10), from 2026-09-28, the first full day after it was
-#   registered. A Carry position held into a day notebook 09's 20% rule
-#   drops earns what its contract did: its own move and funding, or nothing
-#   once it has stopped trading. That measurement, and the filling of two
-#   holes in the archive's 2022 files, came after v2's first run, once its
-#   test window had opened but before any test result was computed
-#   (notebook 11).
+# - v2 (notebook 10), from 2026-10-01, the first full day after the
+#   repository, with v2's rules, was first pushed to GitHub (the start was
+#   2026-09-28 until then). A Carry position held into a day notebook 09's
+#   20% rule drops earns what its contract did: its own move and funding, or
+#   nothing once it has stopped trading. That measurement, and the filling of
+#   two holes in the archive's 2022 files, came after v2's first run and
+#   before its test began (notebook 11).
 # - v2's two sleeves on their own, since notebook 10 found that its
 #   Orderflow sleeve fails the gate on the every-pair universe.
 #

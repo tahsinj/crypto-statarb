@@ -213,22 +213,25 @@ def carry_sleeve(
 #     walk-forward weights on both dev and gate.
 # The test is the data from V2_START on (notebook 12).
 
-V2_START = "2026-09-28"
+V2_START = "2026-10-01"
 
-# Added after v2's first run, once its test window had opened but before any
-# test result was computed: how a held Carry position is measured on a day the
-# 20% rule drops its perp's data. It first took the coin's spot move
-# (committed 2026-09-28 UTC); since 2026-09-29 it earns the contract's own
-# return and funding, or nothing once the contract has stopped trading
-# (v2_sleeves' pnl_funding with the *_traded panels), which notebook 12 uses.
-# That changes what v2 earns on a few days, not what it picks. The other fix,
-# filling two holes in the archive's 2022 perp files (2026-09-29), is in the
-# data (notebook 09); it gives Carry funding it was missing, so it also
-# changes what Carry holds for about a week after each hole. Added later:
-# "none chosen by performance" above means none was chosen on v2's own
-# results. The equal weights were picked on the frozen book's dev and gate
-# results, and rank weights also answer the DEXE case of the forward window
-# (notebook 08).
+# Added later. V2_START was 2026-09-28, the first full day after the rules
+# were committed. It moved to 2026-10-01 on 2026-09-30, before any test day
+# had been computed, because a commit's date is only evidence for others once
+# it is public, and the repository was first pushed to GitHub on 2026-09-29
+# (15:17 UTC). Both fixes below therefore also come before the test. How a
+# held Carry position is measured on a day the 20% rule drops its perp's data:
+# it first took the coin's spot move (committed 2026-09-28 UTC); since
+# 2026-09-29 it earns the contract's own return and funding, or nothing once
+# the contract has stopped trading (v2_sleeves' pnl_funding with the *_traded
+# panels), which notebook 12 uses. That changes what v2 earns on a few days,
+# not what it picks. The other fix, filling two holes in the archive's 2022
+# perp files (2026-09-29), is in the data (notebook 09); it gives Carry
+# funding it was missing, so it also changes what Carry holds for about a week
+# after each hole. "None chosen by performance" above means none was chosen on
+# v2's own results. The equal weights were picked on the frozen book's dev and
+# gate results, and rank weights also answer the DEXE case of the forward
+# window (notebook 08).
 
 
 def v2_sleeves(
