@@ -254,6 +254,11 @@ def test_pairs_lag_selection_picks_before_the_first_traded_day():
         assert [(r - s).days for r, s in zip(rebal, seen)] == [gap] * len(rebal) and len(seen) == len(rebal)
 
 
+def test_max_drawdown_counts_a_loss_on_the_first_day():
+    r = pd.Series([-0.10, 0.05, 0.02], index=pd.date_range("2024-01-01", periods=3))
+    assert np.isclose(metrics.max_drawdown(r), -0.10)       # from the starting capital, not from day 1
+
+
 def test_universe_warm_up_and_size():
     """The warm-up days are empty and no day holds more than top_n coins."""
     p = _toy_panels()

@@ -52,8 +52,9 @@ def sortino(returns: pd.Series, rf: float = 0.0, periods_per_year: int = TRADING
 
 
 def drawdown_curve(returns: pd.Series) -> pd.Series:
+    """Fall from the running high, with the starting capital as the first high."""
     eq = (1.0 + returns.fillna(0.0)).cumprod()
-    return eq / eq.cummax() - 1.0
+    return eq / eq.cummax().clip(lower=1.0) - 1.0
 
 
 def max_drawdown(returns: pd.Series) -> float:

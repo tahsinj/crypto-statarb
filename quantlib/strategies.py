@@ -3,7 +3,7 @@
 momentum_sleeve and reversal_sleeve are the two baselines tested in notebook
 01. seasonal_momentum_sleeve, orderflow_sleeve and carry_sleeve are frozen
 copies of the configurations selected in notebooks 02-04; notebook 06 checks
-each against its saved research parquet before it reads any lockbox data.
+each against its saved research parquet before it computes any lockbox result.
 Costs are parameters so the same definitions can be re-run at other rates.
 """
 from __future__ import annotations

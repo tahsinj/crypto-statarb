@@ -248,7 +248,7 @@ def build_universe(
 ) -> pd.DataFrame:
     """Build a point-in-time tradable universe (boolean dates x symbols).
 
-    A coin is eligible on date t if, using only data through t, it has at least
+    A coin is eligible on date t if, using only data through t-1, it has at least
     min_history trailing prices and its trailing adv_window median dollar-volume
     clears the liquidity bar (an absolute floor and/or top_n by ADV). Trailing
     medians (not point values) avoid selecting on the same-day volume spike that

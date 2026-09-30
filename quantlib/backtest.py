@@ -61,7 +61,9 @@ def run(
     turnover (20 for market orders, 7 for limit). borrow_bps_annual charges a
     daily borrow/funding carry on the short notional held (default 0 = off).
     A coin held on a day it has no return, because it did not trade, earns
-    nothing that day: it stays at its last price.
+    nothing that day. With returns that need two consecutive closes, as
+    data.to_panels builds them, the move across the gap is not booked either,
+    so in effect the position leaves at its last price.
     """
     w = weights.reindex_like(returns).fillna(0.0)
 

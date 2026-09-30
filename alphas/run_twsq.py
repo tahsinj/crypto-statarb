@@ -13,8 +13,8 @@ Then, from this alphas/ directory:
 
 twsq's backtester prices and fills on Binance daily bars, downloaded through
 ccxt with no API key (live trading would go through Kraken). All three runs
-cover the same fixed 701 days, 2024-08-06 to 2026-07-07, which ends where the
-research data ends. The signal data (taker volume, funding) also comes from
+cover the same fixed 701 days, 2024-08-06 to 2026-07-07, a day past the end of
+the research data. The signal data (taker volume, funding) also comes from
 Binance's public API, fetched once per alpha in prepare().
 """
 import os
@@ -53,7 +53,7 @@ def _stats(pos_pnl: pd.DataFrame, orders: pd.DataFrame) -> pd.DataFrame:
         "ann_return": [r.mean() * TRADING_DAYS],
         "ann_vol": [sd * np.sqrt(TRADING_DAYS)],
         "sharpe": [r.mean() / sd * np.sqrt(TRADING_DAYS) if sd else np.nan],
-        "max_drawdown": [(equity / equity.cummax() - 1.0).min()],
+        "max_drawdown": [(equity / equity.cummax().clip(lower=1.0) - 1.0).min()],
         "total_return": [r.sum()],
         "avg_daily_turnover": [filled["ntn_filled"].sum() / CAPITAL / len(r)],
         "fees": [filled["fee"].sum() / CAPITAL],
