@@ -523,16 +523,17 @@ v2_table.round(3)
 # coin list gives the same numbers (step 0b). Taking out the non-crypto
 # assets costs the walk-forward book a little, 1.46 to 1.26 on the lockbox.
 #
-# The coin list is. On every pair (step 2), the frozen book's lockbox Sharpe
-# is 0.35 walk-forward and -0.62 equal weight. Orderflow and Carry both lose
-# money on the gate and the lockbox; Seasonality keeps its dev and gate
-# numbers and still loses on the lockbox. The research list was picked by
-# volume in July 2026, and 46% of the universe's coin-days before then
-# belonged to coins it left out (notebook 09). The coins that did the damage
-# are mostly ones the list never had. Four of Orderflow's five worst coins on
-# the gate were missing from it, OM above all, which collapsed in April
-# 2025. All five of z-score Carry's were: delisting casualties such as VIDT
-# and BNX, which it bought because their funding had turned negative.
+# The coin list is. On every pair (step 2), the frozen book's lockbox Sharpe is
+# 0.35 walk-forward and -0.62 equal weight. Orderflow and Carry both lose money
+# on the gate and the lockbox; Seasonality stays positive on dev and gate (1.57
+# and 1.42, against 1.79 and 1.24 as run) and still loses on the lockbox. The
+# research list was picked by volume in July 2026, and 46% of the universe's
+# coin-days before then belonged to coins it left out (notebook 09). The coins
+# that did the damage are mostly ones the list never had. Four of Orderflow's
+# five worst coins on the gate were missing from it, OM above all, which
+# collapsed in April 2025. All five of z-score Carry's were: delisting
+# casualties such as VIDT and BNX, which it bought because their funding had
+# turned negative.
 #
 # The other steps matter less, with one exception. Perp prices help Carry a
 # little on the gate and the lockbox and hardly at all on dev. The first run of

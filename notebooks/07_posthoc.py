@@ -330,7 +330,7 @@ for name, W in [("equal weight", pd.DataFrame(1 / 3, index=sleeves.index, column
                 ("walk-forward", wf_weights.dropna())]:
     s = sleeves.reindex(W.index)
     R = (W * s).sum(axis=1)
-    moved = (W * s.sub(R, axis=0).abs()).div(1 + R, axis=0)   # share of the book moved into or out of each sleeve
+    moved = (W.abs() * s.sub(R, axis=0).abs()).div(1 + R, axis=0)   # book share moved in or out of each sleeve
     cost = (moved * gross.reindex(W.index) * rate).sum(axis=1)
     rebalance[name] = {w: cost.loc[WINDOWS[w]].mean() * 365 for w in ["dev", "gate"]}
 rebalance = pd.DataFrame(rebalance).T

@@ -163,8 +163,8 @@ of[["config", "dev_sharpe", "gate_sharpe", "note"]]
 # momentum.
 #
 # **Caveat.** Inside the point-in-time universe the signal is almost always
-# available (over 99.99% of universe-days; the missing values are names
-# before their listing). The bigger issue is breadth. The universe held about
+# available (over 99.99% of universe-days; the six misses are each a coin's
+# first day without trading, which the day-old universe still held). The bigger issue is breadth. The universe held about
 # 16-20 names in early 2020 (23 on average that year), about 65 in 2022, 90 in
 # 2024 and 99 in 2025. A 100-name dollar-neutral book diversifies much better
 # than a 20-name one, so part of the gap between gate (+2.12) and dev (+0.89)
