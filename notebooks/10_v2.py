@@ -191,9 +191,9 @@ pd.concat([sleeves, book], axis=1).to_parquet(PROC / "v2_dev_gate.parquet")
 # Carry can pick. And two holes in the archive's 2022 files are filled. Both
 # were made on 2026-09-29 (UTC; an earlier version of the first, on
 # 2026-09-28, used the coin's spot move), before any test result was computed.
-# The test start then moved from 2026-09-28 to 2026-10-01, the first full day
-# after the repository was first pushed to GitHub (2026-09-29, 15:17 UTC), so
-# that every test day comes after a public record of these rules and of both
-# fixes; the first reading moves to 2027-10-01. This notebook is not meant to
-# be rerun: on today's data it would write different numbers over its saved
-# file, which notebook 11 checks against the registry.
+# The test start then moved from 2026-09-28 to 2026-10-01, after the
+# repository was first pushed to GitHub (2026-09-29, 15:17 UTC), so that every
+# test day comes after a public record of these rules and of both fixes; the
+# first reading moves to 2027-10-01. This notebook is not meant to be rerun:
+# on today's data it would write different numbers over its saved file, which
+# notebook 11 checks against the registry.

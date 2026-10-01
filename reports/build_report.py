@@ -39,7 +39,7 @@ OUT = ROOT / "reports" / "REPORT.pdf"
 # The PDF carries a fixed creation date, the end of the day its content last
 # changed, so the same inputs give the same file byte for byte (--check relies
 # on it). Move it forward whenever the content changes.
-BUILD_DATE = datetime(2026, 9, 30, 23, 59, tzinfo=timezone.utc)
+BUILD_DATE = datetime(2026, 10, 1, 23, 59, tzinfo=timezone.utc)
 
 DEV_START, DEV_END = "2020-01-01", "2024-07-31"
 GATE_START, GATE_END = "2024-08-01", "2025-06-30"
@@ -1715,10 +1715,10 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         f"({sr(v2f[('Orderflow', 'Dev')]['sharpe'])} on dev, {sr(v2f[('Orderflow', 'Gate')]['sharpe'])} on "
         "the gate), so by notebook 03's rule it would not have been kept; it stays because v2's "
         "rules were fixed before this check. The three rows are in the registry.\n\n"
-        f"The test is every day from {strategies.V2_START}, the first full day after the repository was first "
-        "pushed to GitHub (2026-09-29, 15:17 UTC). It was set to start on 2026-09-28, the day after the rules "
-        "were committed, and was moved before any test day was computed, because a commit's date is only "
-        "evidence for others once it is public. Notebook "
+        f"The test is every day from {strategies.V2_START}. The rules and both fixes were first pushed to "
+        "GitHub on 2026-09-29 (15:17 UTC), so every test day comes after a public record of them. The start "
+        "was first set to 2026-09-28, the day after the rules were committed, and was moved before any test "
+        "day was computed, because a commit's date is only evidence for others once it is public. Notebook "
         "12 adds each month from the archive, delisted coins included, and reports v2's book and each "
         "sleeve alongside the frozen book. At a Sharpe near 1.5, a t-stat of 2 takes about two years "
         "of data."

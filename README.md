@@ -203,11 +203,11 @@ drops earns what its contract did, and the two archive holes of 2022 are
 filled. Both were made on 2026-09-29 (UTC; an earlier version of the first on
 2026-09-28), before any test result was computed. As first run the figures were
 1.39 and 1.12 (Carry 1.76 and 2.41), and the registry keeps those. Its test is
-every day from 2026-10-01, the first full day after the repository was first
-pushed to GitHub (2026-09-29, 15:17 UTC); it was set to start on 2026-09-28 and
-moved before any test day was computed, so that every test day comes after a
-public record of the rules and both fixes. Notebook 12 adds each month next to
-the frozen book.
+every day from 2026-10-01. The rules and both fixes were first pushed to GitHub
+on 2026-09-29 (15:17 UTC), so every test day comes after a public record of
+them; the start was first set to 2026-09-28 and was moved, before any test day
+was computed, because that date came before the push. Notebook 12 adds each
+month next to the frozen book.
 
 ## What worked and what didn't
 
