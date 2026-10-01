@@ -1176,7 +1176,9 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         "first version were cut; the first version itself is left out. So the "
         "freeze commit also holds a fix to Carry's funding P&L made three minutes after the freeze, "
         "before notebook 06 ran, and the research commit holds only the final wording of "
-        "Seasonality's selection rule (section 3.1)."
+        "Seasonality's selection rule (section 3.1). The whole history was rewritten again on "
+        "2026-10-01 to change wording only, keeping every commit's date; earlier copies of this PDF "
+        "were dropped from it."
     )
     pdf.table_block(perf_rows(base, [("momentum", "Dev"), ("momentum", "Gate"),
                                      ("reversal", "Dev"), ("reversal", "Gate")],
@@ -1716,9 +1718,11 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         "the gate), so by notebook 03's rule it would not have been kept; it stays because v2's "
         "rules were fixed before this check. The three rows are in the registry.\n\n"
         f"The test is every day from {strategies.V2_START}. The rules and both fixes were first pushed to "
-        "GitHub on 2026-09-29 (15:17 UTC), so every test day comes after a public record of them. The start "
-        "was first set to 2026-09-28, the day after the rules were committed, and was moved before any test "
-        "day was computed, because a commit's date is only evidence for others once it is public. Notebook "
+        "GitHub on 2026-09-29 (15:17 UTC); the history was rewritten for wording on 2026-10-01 and "
+        "force-pushed, which replaced those commits, so the test starts on the first full day after that "
+        "push. The start was first set to 2026-09-28, the day after the rules were committed, and has only "
+        "moved later, before any test day was computed, because a commit's date is only evidence for "
+        "others once it is public. Notebook "
         "12 adds each month from the archive, delisted coins included, and reports v2's book and each "
         "sleeve alongside the frozen book. At a Sharpe near 1.5, a t-stat of 2 takes about two years "
         "of data."

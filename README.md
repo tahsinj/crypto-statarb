@@ -39,8 +39,8 @@ the full research trail, including the ideas that failed.
 | Frozen book, walk-forward, every pair | -0.20 | +1.85 | +0.35 | -0.90 |
 | Frozen book, equal weight, research coin list | +1.68 | +2.90 | +1.23 | +0.63 |
 | Frozen book, equal weight, every pair | +0.79 | -1.44 | -0.62 | +1.26 |
-| v2 book, every pair | +1.35 | +1.13 | not run | from 2026-10-01 |
-| v2 Carry sleeve, every pair | +1.68 | +2.42 | not run | from 2026-10-01 |
+| v2 book, every pair | +1.35 | +1.13 | not run | from 2026-10-02 |
+| v2 Carry sleeve, every pair | +1.68 | +2.42 | not run | from 2026-10-02 |
 
 Dev is 2020-01 to 2024-07, the gate 2024-08 to 2025-06, the lockbox 2025-07 to
 2026-07 and the forward window 2026-07-07 to 2026-09-26. The walk-forward book
@@ -111,7 +111,9 @@ any test result was computed (see v2 below); as first run they were +1.39 and
   commit also holds a fix to Carry's funding P&L made three minutes after the
   freeze, before notebook 06 ran, and the research commit holds only the final
   wording of Seasonality's selection rule, changed about nine minutes after its
-  results were logged (notebook 02 has the details).
+  results were logged (notebook 02 has the details). The whole history was
+  rewritten again on 2026-10-01 to change wording only, keeping every commit's
+  date; earlier copies of reports/REPORT.pdf were dropped from it.
 
 ## The book on the original coin list
 
@@ -203,11 +205,12 @@ drops earns what its contract did, and the two archive holes of 2022 are
 filled. Both were made on 2026-09-29 (UTC; an earlier version of the first on
 2026-09-28), before any test result was computed. As first run the figures were
 1.39 and 1.12 (Carry 1.76 and 2.41), and the registry keeps those. Its test is
-every day from 2026-10-01. The rules and both fixes were first pushed to GitHub
-on 2026-09-29 (15:17 UTC), so every test day comes after a public record of
-them; the start was first set to 2026-09-28 and was moved, before any test day
-was computed, because that date came before the push. Notebook 12 adds each
-month next to the frozen book.
+every day from 2026-10-02. The rules and both fixes were first pushed to GitHub
+on 2026-09-29 (15:17 UTC); the history was rewritten for wording on 2026-10-01
+and force-pushed, which replaced those commits, so the test starts on the first
+full day after that push. The start was first set to 2026-09-28 and has only
+moved later, before any test day was computed. Notebook 12 adds each month next
+to the frozen book.
 
 ## What worked and what didn't
 
