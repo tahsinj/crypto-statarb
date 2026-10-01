@@ -1,9 +1,8 @@
 # Statistical Arbitrage in Cryptocurrencies
 
-The goal: find momentum
-and/or reversal strategies in crypto, backtest them unconstrained with
-realistic costs (20 bps for market orders, 7 bps for limit orders), combine the
-ones that work with proper weighting, and report returns, volatility, Sharpe,
+The goal: find momentum and/or reversal strategies in crypto, backtest them 
+unconstrained with realistic costs (20 bps for market orders, 7 bps for limit orders), 
+combine the ones that work with proper weighting, and report returns, volatility, Sharpe,
 drawdowns and alpha/beta.
 
 The write-up is [`reports/REPORT.pdf`](reports/REPORT.pdf). The notebooks hold
