@@ -52,7 +52,7 @@ GATE = slice("2024-08-01", GATE_END)
 PPY = 24 * 365
 
 price = pd.read_parquet(PROC / "price_1h.parquet").loc["2020-06-01":GATE_END]
-returns = price.pct_change()
+returns = price.pct_change(fill_method=None)
 uni_d = pd.read_parquet(PROC / "universe.parquet").loc[:GATE_END]
 
 # Point-in-time tradability by the hour: a name is tradable in hour t if it

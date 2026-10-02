@@ -140,7 +140,7 @@ def to_panels(
         taker = raw.xs("taker", axis=1, level=1).reindex_like(price)
 
     price = price.where(price > 0)  # non-positive prices are bad ticks
-    returns = price.pct_change()
+    returns = price.pct_change(fill_method=None)  # no return across a gap (pandas < 3 filled it)
 
     out = {"price": price, "dollar_volume": volume, "returns": returns}
     if taker is not None:
@@ -207,7 +207,7 @@ def archive_panels(
         "perp_price": px,
         "perp_high": raw_perp.xs("high", axis=1, level=1).reindex(idx),
         "perp_low": raw_perp.xs("low", axis=1, level=1).reindex(idx),
-        "perp_returns": px.where(px > 0).pct_change(),
+        "perp_returns": px.where(px > 0).pct_change(fill_method=None),
         "perp_dollar_volume": raw_perp.xs("volume", axis=1, level=1).reindex(idx),
         "funding": funding.reindex(idx),
     }

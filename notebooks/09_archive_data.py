@@ -247,13 +247,13 @@ print("spot coins with more than one perp:", {k: v for k, v in by_spot.items() i
 def perp_spot_corr(perp_ret: pd.DataFrame) -> pd.Series:
     out = {}
     for coin in perp_ret.columns:
-        both = pd.concat([perp_ret[coin], spot_price[coin].pct_change()], axis=1, sort=True).dropna()
+        both = pd.concat([perp_ret[coin], spot_price[coin].pct_change(fill_method=None)], axis=1, sort=True).dropna()
         if len(both) > 30:
             out[coin] = both.corr().iloc[0, 1]
     return pd.Series(out).sort_values()
 
 
-raw_perp_ret = pd.DataFrame({coin: um_price[perps[0]].pct_change() for coin, perps in by_spot.items()})
+raw_perp_ret = pd.DataFrame({coin: um_price[perps[0]].pct_change(fill_method=None) for coin, perps in by_spot.items()})
 weak = perp_spot_corr(raw_perp_ret).head(8)
 ratio = {c: (um_price[by_spot[c][0]] / (data.contract_size(by_spot[c][0], c) * spot_price[c])).dropna() for c in weak.index}
 pd.DataFrame({"correlation": weak.round(3),

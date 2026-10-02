@@ -272,7 +272,7 @@ for bucket in ["weekday", "weekend", "turn_of_month"]:
         cal[(f"P2 {bucket}", timing)] = sharpe_row(r, ["dev", "gate"])
     row = reg[(reg["family"] == "seasonality") & (reg["config"] == json.dumps({"bucket": bucket, "probe": "P2"}))].iloc[0]
     assert np.isclose(cal[(f"P2 {bucket}", "as run")]["dev"], row["dev_sharpe"], atol=1e-12)
-ew_1h = pd.read_parquet(PROC / "price_1h.parquet").loc[upto].pct_change().mean(axis=1)
+ew_1h = pd.read_parquet(PROC / "price_1h.parquet").loc[upto].pct_change(fill_method=None).mean(axis=1)
 m = signals.calendar_mask(ew_1h.index, "off_hours").astype(float)
 for timing, held in [("as run", m.shift(1).fillna(0.0)), ("on the hour", m)]:
     r = ew_1h * held - held.diff().abs().fillna(0.0) * 7 / 1e4

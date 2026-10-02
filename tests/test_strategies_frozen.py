@@ -18,7 +18,7 @@ def _toy(n=400, k=12, seed=3):
     uni = pd.DataFrame(True, index=idx, columns=cols)
     imb = pd.DataFrame(rng.uniform(0.3, 0.7, (n, k)), index=idx, columns=cols)
     fund = pd.DataFrame(rng.normal(1e-4, 3e-4, (n, k)), index=idx, columns=cols)
-    return price, price.pct_change(), uni, imb, fund
+    return price, price.pct_change(fill_method=None), uni, imb, fund
 
 
 def test_seasonal_momentum_is_scaled_momentum():

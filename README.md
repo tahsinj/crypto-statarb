@@ -334,6 +334,12 @@ Things to know before rerunning:
   commit is pushed somewhere public. If the archive has not published a day
   yet, the notebook stops before logging anything; run it again a day
   later.
+- Returns are computed with `pct_change(fill_method=None)`, so a missing day
+  gives no return rather than one across the gap. That is the default in
+  pandas 3, which `requirements.txt` pins; pandas 2 and earlier filled gaps
+  by default. The argument was made explicit on 2026-10-02, and notebooks 00,
+  02, 05, 07, 08, 09 and 11, rerun, gave the same outputs and byte-identical
+  data files (02 and 05 keep their July runs).
 - The trial registry (`data/processed/trial_registry.csv`) skips configs it
   already holds, so rerunning a notebook does not add trials. It has 48
   research rows, the two combination rules and three v2 rows.

@@ -107,7 +107,7 @@ pd.DataFrame(p2, index=["dev", "gate"]).T.round(2)
 
 # ## P3: US hours vs off hours (hourly panel, descriptive first)
 
-rets_1h = price_1h.pct_change()
+rets_1h = price_1h.pct_change(fill_method=None)
 ew_1h = rets_1h.mean(axis=1)
 split = {}
 for bucket in ["us_hours", "off_hours"]:

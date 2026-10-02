@@ -19,7 +19,7 @@ def _toy_panels(n_days=400, n_assets=20, seed=1):
     rets = pd.DataFrame(rng.normal(0, 0.03, (n_days, n_assets)), index=idx, columns=cols)
     price = 100 * (1 + rets).cumprod()
     dvol = pd.DataFrame(rng.uniform(1e6, 1e8, (n_days, n_assets)), index=idx, columns=cols)
-    return {"price": price, "returns": price.pct_change(), "dollar_volume": dvol}
+    return {"price": price, "returns": price.pct_change(fill_method=None), "dollar_volume": dvol}
 
 
 def test_no_lookahead():
@@ -180,7 +180,7 @@ def test_limit_fills_miss_buys_when_the_price_runs_away():
     """A buy at the close does not fill on a day that never trades below it."""
     idx = pd.date_range("2024-01-01", periods=4)
     close = pd.DataFrame({"A": [100.0, 110.0, 121.0, 121.0]}, index=idx)
-    rets = close.pct_change()
+    rets = close.pct_change(fill_method=None)
     high, low = close * 1.01, close.shift(1) * 1.001      # every day stays above the prior close
     low.iloc[3] = 120.0                                    # day 4 dips below it
     w = pd.DataFrame({"A": [1.0, 1.0, 1.0, 1.0]}, index=idx)
@@ -199,10 +199,10 @@ def test_limit_fills_settle_a_contract_that_stops_trading():
     w = pd.DataFrame({"A": [1.0] * 3 + [0.0] * 9, "B": 1.0}, index=idx)   # A's target drops to zero in the gap
     high, low = close * 1.01, close * 0.99
     high.loc[idx[9]:, "A"] = 99.0                            # after the relaunch a sell at the old close never fills
-    _, held = backtest.run_limit_fills(w, close.pct_change(), close, high, low, cost_bps=0)
+    _, held = backtest.run_limit_fills(w, close.pct_change(fill_method=None), close, high, low, cost_bps=0)
     assert held["A"].iloc[1:6].eq(1).all() and held["A"].iloc[6:].eq(0).all()
     assert held["B"].iloc[1:].eq(1).all()
-    _, kept = backtest.run_limit_fills(w, close.pct_change(), close, high, low, cost_bps=0, settle_after=100)
+    _, kept = backtest.run_limit_fills(w, close.pct_change(fill_method=None), close, high, low, cost_bps=0, settle_after=100)
     assert kept["A"].iloc[9:].eq(1).all()                    # never settled: back on the new contract
 
 
@@ -228,7 +228,7 @@ def test_pairs_edge_charges_open_and_close():
     b = pd.Series(np.cumsum(rng.normal(0, 0.01, 80)), index=idx)
     a = b + np.where(np.arange(80) >= 40, 0.2, 0.0)        # the spread jumps on day 41
     logp = pd.DataFrame({"a": a, "b": b})
-    rets = np.exp(logp).pct_change()
+    rets = np.exp(logp).pct_change(fill_method=None)
     seg = idx[45:60]                                       # a short position is on by then
     _, to, _, edge = pairs._pair_stream(logp, rets, "a", "b", 1.0, seg, 2.0, 0.0, 30)
     assert edge.iloc[0] > 0.99 and edge.iloc[-1] > 0.99    # gross ~1 per open pair, each way

@@ -56,7 +56,7 @@ class SeasonalMomentum(Alpha):
         w = sign.div(sign.abs().sum(axis=1).replace(0, np.nan), axis=0)
 
         # The unscaled book's daily returns (gross of costs) give the vol estimate.
-        book = (w.shift(1) * px.pct_change()).sum(axis=1, min_count=1).dropna()
+        book = (w.shift(1) * px.pct_change(fill_method=None)).sum(axis=1, min_count=1).dropna()
         vol = book.ewm(halflife=self.halflife, min_periods=self.halflife).std().iloc[-1]
         vol *= np.sqrt(TRADING_DAYS)
         if not np.isfinite(vol) or vol <= 0:

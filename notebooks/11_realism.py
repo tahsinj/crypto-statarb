@@ -376,7 +376,7 @@ DEV_H = slice("2020-06-01", "2024-07-31")
 def fast_grid(price_h: pd.DataFrame, uni_daily: pd.DataFrame) -> pd.DataFrame:
     """Notebook 05's eight configs on an hourly panel; no trials are logged."""
     price_h = price_h.loc["2020-06-01":"2025-06-30"]
-    rets_h = price_h.pct_change()
+    rets_h = price_h.pct_change(fill_method=None)
     uni_h = (uni_daily.loc[:"2025-06-30"].reindex(columns=price_h.columns)
              .reindex(price_h.index, method="ffill").fillna(False))
     rows = {}
