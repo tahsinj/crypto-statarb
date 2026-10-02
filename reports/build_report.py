@@ -39,7 +39,7 @@ OUT = ROOT / "reports" / "REPORT.pdf"
 # The PDF carries a fixed creation date, the end of the day its content last
 # changed, so the same inputs give the same file byte for byte (--check relies
 # on it). Move it forward whenever the content changes.
-BUILD_DATE = datetime(2026, 10, 1, 23, 59, tzinfo=timezone.utc)
+BUILD_DATE = datetime(2026, 10, 2, 23, 59, tzinfo=timezone.utc)
 
 DEV_START, DEV_END = "2020-01-01", "2024-07-31"
 GATE_START, GATE_END = "2024-08-01", "2025-06-30"
@@ -673,6 +673,9 @@ def doc_failures(v: dict, d: dict) -> list:
         + f" and {sr(tw.loc['FundingCarry', 'sharpe'])})",
         f"an {F['Book, walk-forward']['n']}-day forward test",
         f"holds exactly {N_TRIALS} rows",
+        f"a hypothesis under test from {strategies.V2_START}",
+        f"multiply by {np.sqrt(252 / 365):.2f} (the square root of 252/365), so the lockbox's "
+        f"{lk_wf['sharpe']:.2f} becomes {lk_wf['sharpe'] * np.sqrt(252 / 365):.2f}",
     ]
     readme += [f"or {v['dsr_lk_all']:.2f} counting the first version's configurations",
                f"the book's lockbox deflated Sharpe would be {v['dsr_lk_all']:.2f} instead of {v['dsr_lk']:.2f}",
@@ -1039,14 +1042,18 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         "every pair included, the frozen book's lockbox Sharpe falls to "
         f"{st[('2 every pair', 'walk_forward')]['Lockbox']:.2f} (walk-forward) and "
         f"{st[('2 every pair', 'equal_weight')]['Lockbox']:.2f} (equal weight), so most of the result "
-        "came from the coin list. Fills and market impact tell the same story for Orderflow, the "
-        "sleeve that looked best.\n\n"
-        "What holds up on the full universe, on dev and gate, is funding carry: weighted by rank and "
-        f"measured on perp prices, it has a Sharpe of {v2f[('Carry', 'Dev')]['sharpe']:.2f} on dev and "
-        f"{v2f[('Carry', 'Gate')]['sharpe']:.2f} on the gate at about "
-        f"{pct(v2f[('Carry', 'Dev')]['vol'], 0)} volatility. A second version of the book built around "
-        "it (v2) was registered in the repository before it was tested; its test is every day from "
-        f"{strategies.V2_START}, recorded month by month in notebook 12."
+        "came from the coin list. That is the main lesson of the project: a coin list picked by recent "
+        "volume is a list of survivors, and splitting the history in time does not catch it, because "
+        "every window, the lockbox included, is drawn from the same list. Fills and market impact tell "
+        "the same story for Orderflow, the sleeve that looked best.\n\n"
+        "The clearest positive result is funding carry: weighted by rank and measured on perp prices, "
+        f"it holds up on the full universe, with a Sharpe of {v2f[('Carry', 'Dev')]['sharpe']:.2f} on "
+        f"dev and {v2f[('Carry', 'Gate')]['sharpe']:.2f} on the gate at about "
+        f"{pct(v2f[('Carry', 'Dev')]['vol'], 0)} volatility. Dev and gate had both been seen when it "
+        "was designed, so this is not out-of-sample evidence. A second version of the book built around "
+        "it (v2) was registered in the repository before it was tested, and it is a hypothesis under "
+        f"test, not a validated strategy: its test is every day from {strategies.V2_START}, recorded "
+        "month by month in notebook 12."
     )
     rows = [["Sharpe ratio", "Dev", "Gate", "Lockbox", "Forward"]]
     for key, lab in [("walk_forward", "walk-forward"), ("equal_weight", "equal weight")]:
@@ -1070,25 +1077,26 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
     miss_cost = 1 - fo["price P&L, fill model"] / fo["price P&L, every order filled"]
     pdf.h1("What the project shows")
     pdf.bullets([
-        "A protocol that can fail. The history is split into development, gate and lockbox windows "
-        "in time order, every configuration the research chose between is logged "
-        f"({reg_rows} rows, the {N_TRIALS} research ones charged for with deflated Sharpe ratios), the "
-        "lockbox has one recorded run, and v2's rules "
-        "were committed before any v2 number existed. The problems below were found because of it.",
-        "A survivorship check on its own result. The daily data was rebuilt from Binance's public "
+        "Survivorship, the main lesson. The daily data was rebuilt from Binance's public "
         f"archive for {v['n_all']} coins, delisted ones included, and its prices and funding rates "
         f"match the research data exactly where the two overlap. It showed that {pct(v['surv'], 0)} of "
         "the historical universe "
         "was missing from the research coin list, and that the book's lockbox result came mostly "
         "from that gap (section 5).",
+        "Funding carry, the clearest positive result: weighted by rank on perp prices, it holds up on "
+        f"the full universe on dev and gate, with a Sharpe of {v2f[('Carry', 'Dev')]['sharpe']:.2f} and "
+        f"{v2f[('Carry', 'Gate')]['sharpe']:.2f}. Both windows had been seen when it was designed, so "
+        "v2, the book built on it, is a hypothesis under test on new data, not a validated strategy "
+        "(section 7).",
+        "A protocol that can fail. The history is split into development, gate and lockbox windows "
+        "in time order, every configuration the research chose between is logged "
+        f"({reg_rows} rows, the {N_TRIALS} research ones charged for with deflated Sharpe ratios), the "
+        "lockbox has one recorded run, and v2's rules "
+        "were committed before any v2 number existed.",
         f"Execution measured, not assumed. A fill model shows that {pct(fo['filled share of orders'], 0)} "
         "of limit orders fill, but the ones that miss are the days the price runs away, which costs "
         f"Orderflow {pct(miss_cost, 0)} of its price P&L on dev. A per-coin market-impact model shows "
         "its edge is mostly gone by $1M (section 5).",
-        "An edge that holds up on the full universe, on dev and gate: funding carry weighted by rank "
-        f"on perp prices, with a Sharpe of {v2f[('Carry', 'Dev')]['sharpe']:.2f} and "
-        f"{v2f[('Carry', 'Gate')]['sharpe']:.2f}. v2 is built on it and is being tested on new data "
-        "(section 7).",
         "Code that checks itself. The shared library has tests for look-ahead, dollar neutrality, "
         "costs, the fill model and the data pipeline; the report is rebuilt from the notebooks' "
         "saved results and stops before writing the PDF if a headline number, in the report or the "
@@ -1129,7 +1137,10 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         "day: 20 bps per dollar traded for market orders (7 bps commission plus 13 bps "
         "slippage) and 7 bps for limit orders. The momentum sleeves take liquidity and pay "
         "20 bps; orderflow, carry and pairs rebalance passively and pay 7 bps. Backtests are "
-        "unconstrained, and Sharpe ratios are annualised with 365 days."
+        "unconstrained, and Sharpe ratios are annualised with 365 days, since crypto trades every "
+        "day; for the 252-day convention used for stocks, multiply by "
+        f"{np.sqrt(252 / 365):.2f} (the square root of 252/365), so the book's lockbox Sharpe of "
+        f"{lk_wf['sharpe']:.2f} becomes {lk_wf['sharpe'] * np.sqrt(252 / 365):.2f}."
     )
     pdf.table_block([
         ["Window", "Dates", "Used for"],
@@ -1725,7 +1736,8 @@ def build_pdf(d: dict, v: dict, figs: dict, out: Path = OUT) -> int:
         "others once it is public. Notebook "
         "12 adds each month from the archive, delisted coins included, and reports v2's book and each "
         "sleeve alongside the frozen book. At a Sharpe near 1.5, a t-stat of 2 takes about two years "
-        "of data."
+        "of data. Until then v2 is a hypothesis under test, not a validated strategy: its dev and gate "
+        "figures come from windows that had been seen when it was designed."
     )
 
     # 8. twsq

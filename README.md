@@ -10,22 +10,26 @@ the full research trail, including the ideas that failed.
 
 ## What this project shows
 
+- Survivorship, the main lesson. The research coin list, the 150 USDT pairs
+  with the most 24-hour volume on 2026-07-06, was mostly survivors: 46% of the
+  historical top-100 universe was missing from it. Rebuilt from Binance's
+  public archive with all 585 coins, delisted ones included, the book's
+  lockbox Sharpe falls from 1.46 to 0.35. Splitting the history in time could
+  not catch this, because every window, the lockbox included, was drawn from
+  the same list.
+- Funding carry, the clearest positive result: weighted by rank on perp
+  prices, Sharpe 1.68 and 2.42 on dev and gate across every pair. Both windows
+  had been seen when it was designed, so this is not out-of-sample evidence.
+  v2, the book built on it, is a hypothesis under test from 2026-10-02, not a
+  validated strategy.
 - A research protocol that can fail: development, gate and lockbox windows in
   time order, a registry of the 53 configurations the research chose between
   (the two baselines kept parameters set before it), deflated Sharpe ratios
   that charge for the 48 research ones, a lockbox with one recorded run, and
   a second version registered in the repository before it was tested.
-- A survivorship check on its own result. The research coin list, the 150 USDT
-  pairs with the most 24-hour volume on 2026-07-06, was mostly survivors: 46%
-  of the historical top-100 universe was missing from it. Rebuilt from
-  Binance's public archive with all 585 coins, delisted ones included, the
-  book's lockbox Sharpe falls from 1.46 to 0.35.
 - Execution measured, not assumed. 99% of limit orders fill, but the misses
   are the days the price runs away, which costs Orderflow 43% of its price
   P&L on dev. Under a square-root impact model its edge is mostly gone by $1M.
-- An edge that holds up on the full universe on dev and gate: funding carry
-  weighted by rank on perp prices, Sharpe 1.68 and 2.42. The second version of
-  the book is built on it and has a monthly forward test.
 - A tested library, a backtester that lags every weight by a day, and a report
   that is rebuilt from the notebooks' saved results and stops if a headline
   number, in it or in this README, disagrees with them. `check.py` runs every
@@ -52,6 +56,10 @@ it was written; notebook 12 uses those months only as history for v2's first
 positions. Its figures include two fixes made after its first run and before
 any test result was computed (see v2 below); as first run they were +1.39 and
 +1.12, and +1.76 and +2.41 for Carry.
+
+Sharpe ratios are annualised over 365 days, since crypto trades every day; for
+the 252-day convention used for stocks, multiply by 0.83 (the square root of
+252/365), so the lockbox's 1.46 becomes 1.21.
 
 ## How the research was run
 
@@ -210,7 +218,10 @@ on 2026-09-29 (15:17 UTC); the history was rewritten for wording on 2026-10-01
 and force-pushed, which replaced those commits, so the test starts on the first
 full day after that push. The start was first set to 2026-09-28 and has only
 moved later, before any test day was computed. Notebook 12 adds each month next
-to the frozen book.
+to the frozen book. Until that record is long enough to judge, v2 is a
+hypothesis under test, not a validated strategy: dev and gate had been seen
+when it was designed, and at a Sharpe near 1.5 a t-stat of 2 takes about two
+years of data.
 
 ## What worked and what didn't
 
